@@ -177,9 +177,11 @@ router.get('/export/overtime/:year/:month', async (req, res) => {
     // Generate buffer
     const buffer = await workbook.xlsx.writeBuffer();
 
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename=overtime_${year}_${month}.xlsx`);
-    res.send(buffer);
+    // Return as base64 JSON to simplify client handling across web and mobile
+    const base64 = Buffer.from(buffer).toString('base64');
+    const filename = `overtime_${year}_${month}.xlsx`;
+
+    res.json({ base64, filename });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
