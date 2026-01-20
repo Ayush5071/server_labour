@@ -10,7 +10,7 @@ const router = express.Router();
 router.get('/:year', async (req, res) => {
   try {
     const bonuses = await Bonus.find({ year: parseInt(req.params.year) })
-      .populate('worker', 'name workerId dailyPay advanceBalance')
+      .populate('worker', 'name workerId hourlyRate advanceBalance')
       .sort({ 'worker.name': 1 });
 
     res.json(bonuses);
@@ -69,7 +69,7 @@ router.post('/calculate', async (req, res) => {
     }
 
     const populatedResults = await Bonus.find({ year })
-      .populate('worker', 'name workerId dailyPay advanceBalance')
+      .populate('worker', 'name workerId hourlyRate advanceBalance')
       .sort({ 'worker.name': 1 });
 
     res.json(populatedResults);
@@ -128,7 +128,7 @@ router.post('/pay/:id', async (req, res) => {
 router.get('/summary/:year', async (req, res) => {
   try {
     const bonuses = await Bonus.find({ year: parseInt(req.params.year) })
-      .populate('worker', 'name workerId');
+      .populate('worker', 'name workerId hourlyRate advanceBalance');
 
     const summary = {
       year: parseInt(req.params.year),

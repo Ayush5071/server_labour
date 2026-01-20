@@ -9,7 +9,16 @@ router.get('/', async (req, res) => {
     const { active } = req.query;
     const filter = active !== undefined ? { isActive: active === 'true' } : {};
     const workers = await Worker.find(filter).sort({ name: 1 });
-    res.json(workers);
+    // Normalize salary field for older records that may still have dailyPay stored
+    const normalized = workers.map(w => {
+      const obj = w.toObject ? w.toObject() : w;
+      if (!obj.hourlyRate && obj.dailyPay) {
+        obj.hourlyRate = obj.dailyPay / (obj.dailyWorkingHours || 8);
+      }
+      return obj;
+    });
+
+    res.json(normalized);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -22,7 +31,13 @@ router.get('/:id', async (req, res) => {
     if (!worker) {
       return res.status(404).json({ error: 'Worker not found' });
     }
-    res.json(worker);
+
+    const obj = worker.toObject ? worker.toObject() : worker;
+    if (!obj.hourlyRate && obj.dailyPay) {
+      obj.hourlyRate = obj.dailyPay / (obj.dailyWorkingHours || 8);
+    }
+
+    res.json(obj);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -35,8 +50,7 @@ router.post('/', async (req, res) => {
       workerId,
       name,
       dailyWorkingHours,
-      dailyPay,
-      overtimeRate,
+      hourlyRate,
       bankDetails
     } = req.body;
 
@@ -49,8 +63,7 @@ router.post('/', async (req, res) => {
       workerId,
       name,
       dailyWorkingHours: dailyWorkingHours || 8,
-      dailyPay,
-      overtimeRate: overtimeRate || 1.5,
+      hourlyRate,
       bankDetails: bankDetails || {}
     });
 
@@ -68,8 +81,7 @@ router.put('/:id', async (req, res) => {
       workerId,
       name,
       dailyWorkingHours,
-      dailyPay,
-      overtimeRate,
+      hourlyRate,
       bankDetails,
       isActive
     } = req.body;
@@ -91,8 +103,7 @@ router.put('/:id', async (req, res) => {
         workerId,
         name,
         dailyWorkingHours,
-        dailyPay,
-        overtimeRate,
+        hourlyRate,
         bankDetails,
         isActive
       },

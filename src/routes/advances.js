@@ -280,7 +280,7 @@ router.get('/calculate/:workerId', async (req, res) => {
         _id: worker._id,
         name: worker.name,
         workerId: worker.workerId,
-        dailyPay: worker.dailyPay,
+        hourlyRate: worker.hourlyRate || (worker.dailyPay ? worker.dailyPay / worker.dailyWorkingHours : 0),
         advanceBalance: worker.advanceBalance
       },
       period: { startDate, endDate },

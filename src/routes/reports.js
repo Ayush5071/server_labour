@@ -16,7 +16,7 @@ router.get('/overtime/:year/:month', async (req, res) => {
     const entries = await DailyEntry.find({
       date: { $gte: startDate, $lte: endDate },
       overtimeHours: { $gt: 0 }
-    }).populate('worker', 'name workerId bankDetails dailyPay dailyWorkingHours overtimeRate');
+    }).populate('worker', 'name workerId bankDetails hourlyRate dailyWorkingHours');
 
     // Group by worker
     const workerOvertimeMap = {};
@@ -63,7 +63,7 @@ router.get('/export/overtime/:year/:month', async (req, res) => {
     const entries = await DailyEntry.find({
       date: { $gte: startDate, $lte: endDate },
       overtimeHours: { $gt: 0 }
-    }).populate('worker', 'name workerId bankDetails dailyPay dailyWorkingHours overtimeRate');
+    }).populate('worker', 'name workerId bankDetails hourlyRate dailyWorkingHours');
 
     // Group by worker
     const workerOvertimeMap = {};

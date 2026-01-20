@@ -17,7 +17,7 @@ const workerSchema = new mongoose.Schema({
     required: true,
     default: 8
   },
-  dailyPay: {
+  hourlyRate: {
     type: Number,
     required: true
   },

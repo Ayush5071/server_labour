@@ -34,7 +34,7 @@ router.get('/', async (req, res) => {
     }
 
     const entries = await DailyEntry.find(filter)
-      .populate('worker', 'name workerId dailyPay dailyWorkingHours')
+      .populate('worker', 'name workerId hourlyRate dailyWorkingHours')
       .sort({ date: -1, createdAt: -1 });
 
     res.json(entries);
@@ -63,7 +63,7 @@ router.get('/daily/:date', async (req, res) => {
     // Get existing entries for this date
     const entries = await DailyEntry.find({
       date: { $gte: dayStart, $lte: dayEnd }
-    }).populate('worker', 'name workerId dailyPay dailyWorkingHours');
+    }).populate('worker', 'name workerId hourlyRate dailyWorkingHours');
 
     // Map entries by worker ID
     const entryMap = {};
@@ -77,7 +77,7 @@ router.get('/daily/:date', async (req, res) => {
         _id: worker._id,
         name: worker.name,
         workerId: worker.workerId,
-        dailyPay: worker.dailyPay,
+        hourlyRate: worker.hourlyRate,
         dailyWorkingHours: worker.dailyWorkingHours
       },
       entry: entryMap[worker._id.toString()] || null
@@ -113,10 +113,11 @@ router.post('/bulk', async (req, res) => {
       // Calculate pay
       let totalPay = 0;
       if (status === 'present' || status === 'holiday') {
-        const hourlyRate = worker.dailyPay / worker.dailyWorkingHours;
+        const hourlyRate = worker.hourlyRate || (worker.dailyPay ? worker.dailyPay / worker.dailyWorkingHours : 0);
         totalPay = hoursWorked * hourlyRate;
       } else if (status === 'half-day') {
-        totalPay = worker.dailyPay / 2;
+        const hourlyRate = worker.hourlyRate || (worker.dailyPay ? worker.dailyPay / worker.dailyWorkingHours : 0);
+        totalPay = hourlyRate * (worker.dailyWorkingHours / 2);
       }
 
       // Upsert entry
@@ -175,10 +176,11 @@ router.post('/', async (req, res) => {
     // Calculate pay
     let totalPay = 0;
     if (status === 'present' || status === 'holiday') {
-      const hourlyRate = worker.dailyPay / worker.dailyWorkingHours;
+      const hourlyRate = worker.hourlyRate || (worker.dailyPay ? worker.dailyPay / worker.dailyWorkingHours : 0);
       totalPay = hoursWorked * hourlyRate;
     } else if (status === 'half-day') {
-      totalPay = worker.dailyPay / 2;
+      const hourlyRate = worker.hourlyRate;
+      totalPay = hourlyRate * (worker.dailyWorkingHours / 2);
     }
 
     const entry = await DailyEntry.findOneAndUpdate(
@@ -235,9 +237,10 @@ router.post('/mark-holiday', async (req, res) => {
     // Get all active workers
     const workers = await Worker.find({ isActive: true });
 
-    // Create entries for all workers with 8 hours pay
+    // Create entries for all workers with full day pay
     for (const worker of workers) {
-      const totalPay = worker.dailyPay;
+      const hourlyRate = worker.hourlyRate || (worker.dailyPay ? worker.dailyPay / worker.dailyWorkingHours : 0);
+      const totalPay = hourlyRate * worker.dailyWorkingHours;
 
       await DailyEntry.findOneAndUpdate(
         { worker: worker._id, date: dayStart },
