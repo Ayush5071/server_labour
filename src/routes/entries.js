@@ -1,6 +1,7 @@
 import express from 'express';
 import DailyEntry from '../models/DailyEntry.js';
 import Worker from '../models/Worker.js';
+import Holiday from '../models/Holiday.js';
 
 const router = express.Router();
 
@@ -33,7 +34,7 @@ router.get('/', async (req, res) => {
     }
 
     const entries = await DailyEntry.find(filter)
-      .populate('worker', 'name workerId')
+      .populate('worker', 'name workerId dailyPay dailyWorkingHours')
       .sort({ date: -1, createdAt: -1 });
 
     res.json(entries);
@@ -42,62 +43,170 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Get single entry
-router.get('/:id', async (req, res) => {
+// Get entries for a specific date with all workers
+router.get('/daily/:date', async (req, res) => {
   try {
-    const entry = await DailyEntry.findById(req.params.id)
-      .populate('worker', 'name workerId dailyWorkingHours dailyPay overtimeRate');
-    
-    if (!entry) {
-      return res.status(404).json({ error: 'Entry not found' });
-    }
-    res.json(entry);
+    const { date } = req.params;
+    const dayStart = new Date(date);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(date);
+    dayEnd.setHours(23, 59, 59, 999);
+
+    // Check if it's a holiday
+    const holiday = await Holiday.findOne({
+      date: { $gte: dayStart, $lte: dayEnd }
+    });
+
+    // Get all active workers
+    const workers = await Worker.find({ isActive: true }).sort({ name: 1 });
+
+    // Get existing entries for this date
+    const entries = await DailyEntry.find({
+      date: { $gte: dayStart, $lte: dayEnd }
+    }).populate('worker', 'name workerId dailyPay dailyWorkingHours');
+
+    // Map entries by worker ID
+    const entryMap = {};
+    entries.forEach(entry => {
+      entryMap[entry.worker._id.toString()] = entry;
+    });
+
+    // Create response with all workers
+    const result = workers.map(worker => ({
+      worker: {
+        _id: worker._id,
+        name: worker.name,
+        workerId: worker.workerId,
+        dailyPay: worker.dailyPay,
+        dailyWorkingHours: worker.dailyWorkingHours
+      },
+      entry: entryMap[worker._id.toString()] || null
+    }));
+
+    res.json({
+      date,
+      isHoliday: !!holiday,
+      holiday: holiday || null,
+      workers: result
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Create daily entry
+// Bulk create/update daily entries
+router.post('/bulk', async (req, res) => {
+  try {
+    const { date, entries } = req.body;
+    const dayStart = new Date(date);
+    dayStart.setHours(0, 0, 0, 0);
+
+    const results = [];
+
+    for (const entry of entries) {
+      const { workerId, status, hoursWorked, notes } = entry;
+
+      // Get worker
+      const worker = await Worker.findById(workerId);
+      if (!worker) continue;
+
+      // Calculate pay
+      let totalPay = 0;
+      if (status === 'present' || status === 'holiday') {
+        const hourlyRate = worker.dailyPay / worker.dailyWorkingHours;
+        totalPay = hoursWorked * hourlyRate;
+      } else if (status === 'half-day') {
+        totalPay = worker.dailyPay / 2;
+      }
+
+      // Upsert entry
+      const updatedEntry = await DailyEntry.findOneAndUpdate(
+        { worker: workerId, date: dayStart },
+        {
+          worker: workerId,
+          date: dayStart,
+          status,
+          hoursWorked: hoursWorked || 0,
+          totalPay,
+          notes
+        },
+        { upsert: true, new: true }
+      );
+
+      results.push(updatedEntry);
+    }
+
+    // Update worker stats
+    for (const entry of results) {
+      const presentCount = await DailyEntry.countDocuments({
+        worker: entry.worker,
+        status: { $in: ['present', 'holiday'] }
+      });
+      const absentCount = await DailyEntry.countDocuments({
+        worker: entry.worker,
+        status: 'absent'
+      });
+
+      await Worker.findByIdAndUpdate(entry.worker, {
+        totalDaysWorked: presentCount,
+        totalDaysAbsent: absentCount
+      });
+    }
+
+    res.json({ success: true, count: results.length });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// Create single entry
 router.post('/', async (req, res) => {
   try {
-    const { workerId, date, hoursWorked, notes } = req.body;
+    const { workerId, date, status, hoursWorked, notes } = req.body;
 
-    // Get worker details
     const worker = await Worker.findById(workerId);
     if (!worker) {
       return res.status(404).json({ error: 'Worker not found' });
     }
 
-    // Calculate pay
-    const regularHours = Math.min(hoursWorked, worker.dailyWorkingHours);
-    const overtimeHours = Math.max(0, hoursWorked - worker.dailyWorkingHours);
-    
-    const hourlyRate = worker.dailyPay / worker.dailyWorkingHours;
-    const regularPay = regularHours * hourlyRate;
-    const overtimePay = overtimeHours * hourlyRate * worker.overtimeRate;
-    const totalPay = regularPay + overtimePay;
+    const dayStart = new Date(date);
+    dayStart.setHours(0, 0, 0, 0);
 
-    // Create entry
-    const entry = new DailyEntry({
+    // Calculate pay
+    let totalPay = 0;
+    if (status === 'present' || status === 'holiday') {
+      const hourlyRate = worker.dailyPay / worker.dailyWorkingHours;
+      totalPay = hoursWorked * hourlyRate;
+    } else if (status === 'half-day') {
+      totalPay = worker.dailyPay / 2;
+    }
+
+    const entry = await DailyEntry.findOneAndUpdate(
+      { worker: workerId, date: dayStart },
+      {
+        worker: workerId,
+        date: dayStart,
+        status: status || 'present',
+        hoursWorked: hoursWorked || 0,
+        totalPay,
+        notes
+      },
+      { upsert: true, new: true }
+    );
+
+    // Update worker stats
+    const presentCount = await DailyEntry.countDocuments({
       worker: workerId,
-      date: new Date(date),
-      hoursWorked,
-      regularHours,
-      overtimeHours,
-      regularPay,
-      overtimePay,
-      totalPay,
-      notes
+      status: { $in: ['present', 'holiday'] }
+    });
+    const absentCount = await DailyEntry.countDocuments({
+      worker: workerId,
+      status: 'absent'
     });
 
-    await entry.save();
-
-    // Update worker totals
     await Worker.findByIdAndUpdate(workerId, {
-      $inc: {
-        totalEarnings: totalPay,
-        totalOvertimeHours: overtimeHours
-      }
+      totalDaysWorked: presentCount,
+      totalDaysAbsent: absentCount
     });
 
     const populatedEntry = await DailyEntry.findById(entry._id)
@@ -109,63 +218,42 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Update entry
-router.put('/:id', async (req, res) => {
+// Mark holiday for all workers
+router.post('/mark-holiday', async (req, res) => {
   try {
-    const { hoursWorked, notes } = req.body;
+    const { date, holidayName } = req.body;
+    const dayStart = new Date(date);
+    dayStart.setHours(0, 0, 0, 0);
 
-    const existingEntry = await DailyEntry.findById(req.params.id);
-    if (!existingEntry) {
-      return res.status(404).json({ error: 'Entry not found' });
+    // Create or update holiday
+    await Holiday.findOneAndUpdate(
+      { date: dayStart },
+      { date: dayStart, name: holidayName || 'Holiday' },
+      { upsert: true }
+    );
+
+    // Get all active workers
+    const workers = await Worker.find({ isActive: true });
+
+    // Create entries for all workers with 8 hours pay
+    for (const worker of workers) {
+      const totalPay = worker.dailyPay;
+
+      await DailyEntry.findOneAndUpdate(
+        { worker: worker._id, date: dayStart },
+        {
+          worker: worker._id,
+          date: dayStart,
+          status: 'holiday',
+          hoursWorked: worker.dailyWorkingHours,
+          totalPay,
+          notes: holidayName || 'Holiday'
+        },
+        { upsert: true }
+      );
     }
 
-    // Get worker for recalculation
-    const worker = await Worker.findById(existingEntry.worker);
-    if (!worker) {
-      return res.status(404).json({ error: 'Worker not found' });
-    }
-
-    // Revert old totals from worker
-    await Worker.findByIdAndUpdate(existingEntry.worker, {
-      $inc: {
-        totalEarnings: -existingEntry.totalPay,
-        totalOvertimeHours: -existingEntry.overtimeHours
-      }
-    });
-
-    // Recalculate pay
-    const regularHours = Math.min(hoursWorked, worker.dailyWorkingHours);
-    const overtimeHours = Math.max(0, hoursWorked - worker.dailyWorkingHours);
-    
-    const hourlyRate = worker.dailyPay / worker.dailyWorkingHours;
-    const regularPay = regularHours * hourlyRate;
-    const overtimePay = overtimeHours * hourlyRate * worker.overtimeRate;
-    const totalPay = regularPay + overtimePay;
-
-    // Update entry
-    const entry = await DailyEntry.findByIdAndUpdate(
-      req.params.id,
-      {
-        hoursWorked,
-        regularHours,
-        overtimeHours,
-        regularPay,
-        overtimePay,
-        totalPay,
-        notes
-      },
-      { new: true }
-    ).populate('worker', 'name workerId');
-
-    // Add new totals to worker
-    await Worker.findByIdAndUpdate(existingEntry.worker, {
-      $inc: {
-        totalEarnings: totalPay,
-        totalOvertimeHours: overtimeHours
-      }
-    });
-
-    res.json(entry);
+    res.json({ success: true, message: `Holiday marked for ${workers.length} workers` });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -174,22 +262,27 @@ router.put('/:id', async (req, res) => {
 // Delete entry
 router.delete('/:id', async (req, res) => {
   try {
-    const entry = await DailyEntry.findById(req.params.id);
+    const entry = await DailyEntry.findByIdAndDelete(req.params.id);
     if (!entry) {
       return res.status(404).json({ error: 'Entry not found' });
     }
 
-    // Revert totals from worker
-    await Worker.findByIdAndUpdate(entry.worker, {
-      $inc: {
-        totalEarnings: -entry.totalPay,
-        totalOvertimeHours: -entry.overtimeHours
-      }
+    // Update worker stats
+    const presentCount = await DailyEntry.countDocuments({
+      worker: entry.worker,
+      status: { $in: ['present', 'holiday'] }
+    });
+    const absentCount = await DailyEntry.countDocuments({
+      worker: entry.worker,
+      status: 'absent'
     });
 
-    await DailyEntry.findByIdAndDelete(req.params.id);
+    await Worker.findByIdAndUpdate(entry.worker, {
+      totalDaysWorked: presentCount,
+      totalDaysAbsent: absentCount
+    });
 
-    res.json({ message: 'Entry deleted successfully' });
+    res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

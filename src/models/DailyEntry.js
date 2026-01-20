@@ -10,29 +10,18 @@ const dailyEntrySchema = new mongoose.Schema({
     type: Date,
     required: true
   },
+  status: {
+    type: String,
+    enum: ['present', 'absent', 'holiday', 'half-day'],
+    default: 'present'
+  },
   hoursWorked: {
-    type: Number,
-    required: true
-  },
-  regularHours: {
-    type: Number,
-    required: true
-  },
-  overtimeHours: {
-    type: Number,
-    default: 0
-  },
-  regularPay: {
-    type: Number,
-    required: true
-  },
-  overtimePay: {
     type: Number,
     default: 0
   },
   totalPay: {
     type: Number,
-    required: true
+    default: 0
   },
   notes: {
     type: String,
@@ -42,8 +31,8 @@ const dailyEntrySchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Index for efficient queries
-dailyEntrySchema.index({ worker: 1, date: 1 });
+// Compound index to prevent duplicate entries for same worker on same date
+dailyEntrySchema.index({ worker: 1, date: 1 }, { unique: true });
 dailyEntrySchema.index({ date: 1 });
 
 export default mongoose.model('DailyEntry', dailyEntrySchema);

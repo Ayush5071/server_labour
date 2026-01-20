@@ -21,11 +21,6 @@ const workerSchema = new mongoose.Schema({
     type: Number,
     required: true
   },
-  overtimeRate: {
-    type: Number,
-    required: true,
-    default: 1.5 // multiplier for overtime
-  },
   bankDetails: {
     bankName: { type: String, trim: true },
     accountNumber: { type: String, trim: true },
@@ -35,11 +30,29 @@ const workerSchema = new mongoose.Schema({
     type: Boolean,
     default: true
   },
+  // Advance tracking
+  advanceBalance: {
+    type: Number,
+    default: 0
+  },
+  totalAdvanceTaken: {
+    type: Number,
+    default: 0
+  },
+  totalAdvanceRepaid: {
+    type: Number,
+    default: 0
+  },
+  // Stats
   totalEarnings: {
     type: Number,
     default: 0
   },
-  totalOvertimeHours: {
+  totalDaysWorked: {
+    type: Number,
+    default: 0
+  },
+  totalDaysAbsent: {
     type: Number,
     default: 0
   }

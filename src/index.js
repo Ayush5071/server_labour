@@ -5,6 +5,10 @@ import dotenv from 'dotenv';
 import workerRoutes from './routes/workers.js';
 import entryRoutes from './routes/entries.js';
 import reportRoutes from './routes/reports.js';
+import advanceRoutes from './routes/advances.js';
+import vaultRoutes from './routes/vault.js';
+import bonusRoutes from './routes/bonus.js';
+import holidayRoutes from './routes/holidays.js';
 
 dotenv.config();
 
@@ -25,6 +29,10 @@ mongoose.connect(MONGODB_URI)
     app.use('/api/workers', workerRoutes);
     app.use('/api/entries', entryRoutes);
     app.use('/api/reports', reportRoutes);
+    app.use('/api/advances', advanceRoutes);
+    app.use('/api/vault', vaultRoutes);
+    app.use('/api/bonus', bonusRoutes);
+    app.use('/api/holidays', holidayRoutes);
 
     // Health check
     app.get('/api/health', (req, res) => {
