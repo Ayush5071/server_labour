@@ -16,6 +16,11 @@ const bonusSchema = new mongoose.Schema({
     ref: 'Worker',
     required: true
   },
+  // Base bonus = hourlyRate × 8 hours × 30 days
+  hourlyRate: {
+    type: Number,
+    default: 0
+  },
   baseBonusAmount: {
     type: Number,
     required: true
@@ -36,7 +41,18 @@ const bonusSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  // Advance repayment deducted from bonus
   advanceDeduction: {
+    type: Number,
+    default: 0
+  },
+  // Extra bonus amount (additional money given)
+  extraBonus: {
+    type: Number,
+    default: 0
+  },
+  // Current advance balance at time of calculation
+  currentAdvanceBalance: {
     type: Number,
     default: 0
   },

@@ -66,9 +66,27 @@ router.get('/all-workers-summary', async (req, res) => {
       workerMap[workerId].entries.push(entry);
     });
 
-    // Calculate deposit and final amount for each worker
+    // Calculate advance taken, deposit and final amount for each worker
     const report = await Promise.all(Object.values(workerMap).map(async (item) => {
-      // Get deposits for this worker in the date range
+      // Get advances (money given to worker) in the date range
+      const advanceFilter = { 
+        worker: item.worker._id,
+        type: 'advance'
+      };
+      if (startDate || endDate) {
+        advanceFilter.date = {};
+        if (startDate) advanceFilter.date.$gte = new Date(startDate);
+        if (endDate) {
+          const end = new Date(endDate);
+          end.setHours(23, 59, 59, 999);
+          advanceFilter.date.$lte = end;
+        }
+      }
+      
+      const advances = await Advance.find(advanceFilter);
+      const totalAdvanceTaken = advances.reduce((sum, a) => sum + a.amount, 0);
+
+      // Get deposits (money returned by worker) in the date range
       const depositFilter = { 
         worker: item.worker._id,
         type: { $in: ['deposit', 'repayment'] }
@@ -88,6 +106,7 @@ router.get('/all-workers-summary', async (req, res) => {
       
       return {
         ...item,
+        totalAdvanceTaken,
         totalDeposit,
         finalAmount: Math.max(0, item.totalPay - totalDeposit)
       };
@@ -135,8 +154,27 @@ router.get('/export/work-summary', async (req, res) => {
       workerMap[workerId].totalPay += entry.totalPay || 0;
     });
 
-    // Calculate deposits
+    // Calculate advances and deposits
     const report = await Promise.all(Object.values(workerMap).map(async (item) => {
+      // Get advances (money given to worker)
+      const advanceFilter = { 
+        worker: item.worker._id,
+        type: 'advance'
+      };
+      if (startDate || endDate) {
+        advanceFilter.date = {};
+        if (startDate) advanceFilter.date.$gte = new Date(startDate);
+        if (endDate) {
+          const end = new Date(endDate);
+          end.setHours(23, 59, 59, 999);
+          advanceFilter.date.$lte = end;
+        }
+      }
+      
+      const advances = await Advance.find(advanceFilter);
+      const totalAdvanceTaken = advances.reduce((sum, a) => sum + a.amount, 0);
+
+      // Get deposits (money returned by worker)
       const depositFilter = { 
         worker: item.worker._id,
         type: { $in: ['deposit', 'repayment'] }
@@ -156,6 +194,7 @@ router.get('/export/work-summary', async (req, res) => {
       
       return {
         ...item,
+        totalAdvanceTaken,
         totalDeposit,
         finalAmount: Math.max(0, item.totalPay - totalDeposit)
       };
@@ -172,7 +211,7 @@ router.get('/export/work-summary', async (req, res) => {
     const endDateStr = endDate ? new Date(endDate).toLocaleDateString('en-IN') : 'Present';
 
     // Title
-    worksheet.mergeCells('A1:H1');
+    worksheet.mergeCells('A1:I1');
     worksheet.getCell('A1').value = `Work Summary Report (${startDateStr} to ${endDateStr})`;
     worksheet.getCell('A1').font = { bold: true, size: 16 };
     worksheet.getCell('A1').alignment = { horizontal: 'center' };
@@ -187,6 +226,7 @@ router.get('/export/work-summary', async (req, res) => {
       'Per Hr Rate (₹)',
       'Total Hours',
       'Amount (₹)',
+      'Advance Taken (₹)',
       'Deposit (₹)',
       'Final Amount (₹)'
     ]);
@@ -208,6 +248,7 @@ router.get('/export/work-summary', async (req, res) => {
 
     // Data rows
     let totalAmount = 0;
+    let totalAdvances = 0;
     let totalDeposits = 0;
     let totalFinal = 0;
 
@@ -216,16 +257,18 @@ router.get('/export/work-summary', async (req, res) => {
         index + 1,
         item.worker?.workerId || '',
         item.worker?.name || '',
-        item.worker?.hourlyRate || 0,
-        item.totalHoursWorked.toFixed(2),
-        item.totalPay.toFixed(2),
-        item.totalDeposit.toFixed(2),
-        item.finalAmount.toFixed(2)
+        Math.round((item.worker?.hourlyRate || 0) * 100) / 100,
+        Math.round((item.totalHoursWorked || 0) * 100) / 100,
+        Math.round((item.totalPay || 0) * 100) / 100,
+        Math.round((item.totalAdvanceTaken || 0) * 100) / 100,
+        Math.round((item.totalDeposit || 0) * 100) / 100,
+        Math.round((item.finalAmount || 0) * 100) / 100
       ]);
 
-      totalAmount += item.totalPay;
-      totalDeposits += item.totalDeposit;
-      totalFinal += item.finalAmount;
+      totalAmount += item.totalPay || 0;
+      totalAdvances += item.totalAdvanceTaken || 0;
+      totalDeposits += item.totalDeposit || 0;
+      totalFinal += item.finalAmount || 0;
 
       row.eachCell((cell) => {
         cell.border = {
@@ -235,19 +278,34 @@ router.get('/export/work-summary', async (req, res) => {
           right: { style: 'thin' }
         };
       });
+
+      // Color advance cell in light red
+      row.getCell(7).fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFFFCCCC' }
+      };
+      
+      // Color deposit cell in light green
+      row.getCell(8).fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFCCFFCC' }
+      };
     });
 
     // Total row
     worksheet.addRow([]);
     const totalRow = worksheet.addRow([
       '', '', '', '', 'TOTAL:',
-      totalAmount.toFixed(2),
-      totalDeposits.toFixed(2),
-      totalFinal.toFixed(2)
+      Math.round(totalAmount * 100) / 100,
+      Math.round(totalAdvances * 100) / 100,
+      Math.round(totalDeposits * 100) / 100,
+      Math.round(totalFinal * 100) / 100
     ]);
     totalRow.font = { bold: true };
 
-    // Column widths
+    // Column widths and formats
     worksheet.columns = [
       { width: 8 },
       { width: 15 },
@@ -255,9 +313,18 @@ router.get('/export/work-summary', async (req, res) => {
       { width: 15 },
       { width: 15 },
       { width: 15 },
+      { width: 18 },
       { width: 15 },
       { width: 18 }
     ];
+
+    // Apply number formats to numeric columns
+    worksheet.getColumn(4).numFmt = '0.00'; // Per Hr Rate
+    worksheet.getColumn(5).numFmt = '0.00'; // Total Hours
+    worksheet.getColumn(6).numFmt = '#,##0.00'; // Amount
+    worksheet.getColumn(7).numFmt = '#,##0.00'; // Advance Taken
+    worksheet.getColumn(8).numFmt = '#,##0.00'; // Deposit
+    worksheet.getColumn(9).numFmt = '#,##0.00'; // Final Amount
 
     const buffer = await workbook.xlsx.writeBuffer();
     const base64 = Buffer.from(buffer).toString('base64');
@@ -401,11 +468,11 @@ router.get('/export/overtime/:year/:month', async (req, res) => {
         item.worker.bankDetails?.bankName || '',
         item.worker.bankDetails?.accountNumber || '',
         item.worker.bankDetails?.ifscCode || '',
-        item.totalOvertimeHours.toFixed(2),
-        item.totalOvertimePay.toFixed(2)
+        Math.round((item.totalOvertimeHours || 0) * 100) / 100,
+        Math.round((item.totalOvertimePay || 0) * 100) / 100
       ]);
       
-      totalOvertimePay += item.totalOvertimePay;
+      totalOvertimePay += item.totalOvertimePay || 0;
 
       row.eachCell((cell) => {
         cell.border = {
@@ -421,8 +488,8 @@ router.get('/export/overtime/:year/:month', async (req, res) => {
     worksheet.addRow([]);
     const totalRow = worksheet.addRow([
       '', '', '', '', '', 'TOTAL:',
-      report.reduce((sum, item) => sum + item.totalOvertimeHours, 0).toFixed(2),
-      totalOvertimePay.toFixed(2)
+      Math.round(report.reduce((sum, item) => sum + (item.totalOvertimeHours || 0), 0) * 100) / 100,
+      Math.round(totalOvertimePay * 100) / 100
     ]);
     totalRow.font = { bold: true };
 
@@ -437,6 +504,10 @@ router.get('/export/overtime/:year/:month', async (req, res) => {
       { width: 15 },
       { width: 18 }
     ];
+
+    // Apply number formats to overtime columns
+    worksheet.getColumn(7).numFmt = '0.00'; // Overtime Hours
+    worksheet.getColumn(8).numFmt = '#,##0.00'; // Overtime Pay
 
     // Generate buffer
     const buffer = await workbook.xlsx.writeBuffer();
