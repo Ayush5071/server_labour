@@ -5,6 +5,12 @@ const bonusSchema = new mongoose.Schema({
     type: Number,
     required: true
   },
+  periodStart: {
+    type: Date
+  },
+  periodEnd: {
+    type: Date
+  },
   worker: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Worker',
@@ -57,6 +63,7 @@ const bonusSchema = new mongoose.Schema({
   timestamps: true
 });
 
-bonusSchema.index({ year: 1, worker: 1 }, { unique: true });
+bonusSchema.index({ year: 1, worker: 1 });
+bonusSchema.index({ periodStart: 1, periodEnd: 1, worker: 1 });
 
 export default mongoose.model('Bonus', bonusSchema);

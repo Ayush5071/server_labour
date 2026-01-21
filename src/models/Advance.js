@@ -8,7 +8,7 @@ const advanceSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ['advance', 'repayment'],
+    enum: ['advance', 'repayment', 'deposit'],
     required: true
   },
   amount: {
