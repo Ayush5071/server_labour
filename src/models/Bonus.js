@@ -51,14 +51,25 @@ const bonusSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  // Employee deposit towards advance repayment
+  employeeDeposit: {
+    type: Number,
+    default: 0
+  },
   // Current advance balance at time of calculation
   currentAdvanceBalance: {
     type: Number,
     default: 0
   },
+  // Calculated final bonus after all deductions and deposits
   finalBonusAmount: {
     type: Number,
     required: true
+  },
+  // The amount actually to be given to employee (bonus - advanceDeduction - employeeDeposit + extraBonus)
+  amountToGiveEmployee: {
+    type: Number,
+    default: 0
   },
   amountPaid: {
     type: Number,
