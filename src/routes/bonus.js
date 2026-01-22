@@ -12,27 +12,31 @@ const months = [
   'July', 'August', 'September', 'October', 'November', 'December'
 ];
 
-// Get all bonuses for a year
-router.get('/:year', async (req, res) => {
-  try {
-    const bonuses = await Bonus.find({ year: parseInt(req.params.year) })
-      .populate('worker', 'name workerId hourlyRate advanceBalance')
-      .sort({ 'worker.name': 1 });
-
-    res.json(bonuses);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
 // Get bonuses by date range
 router.get('/date-range', async (req, res) => {
   try {
     const { startYear, startMonth, endYear, endMonth } = req.query;
-    
-    const startDate = new Date(startYear, startMonth - 1, 1);
-    const endDate = new Date(endYear, endMonth, 0, 23, 59, 59, 999);
-    
+
+    const sY = parseInt(startYear, 10);
+    const sM = parseInt(startMonth, 10);
+    const eY = parseInt(endYear, 10);
+    const eM = parseInt(endMonth, 10);
+
+    if (Number.isNaN(sY) || Number.isNaN(sM) || Number.isNaN(eY) || Number.isNaN(eM)) {
+      return res.status(400).json({ error: 'Invalid or missing startYear/startMonth/endYear/endMonth' });
+    }
+
+    if (sM < 1 || sM > 12 || eM < 1 || eM > 12) {
+      return res.status(400).json({ error: 'startMonth and endMonth must be between 1 and 12' });
+    }
+
+    const startDate = new Date(sY, sM - 1, 1);
+    const endDate = new Date(eY, eM, 0, 23, 59, 59, 999);
+
+    if (startDate > endDate) {
+      return res.status(400).json({ error: 'Start date must be before or equal to end date' });
+    }
+
     const bonuses = await Bonus.find({
       periodStart: { $gte: startDate },
       periodEnd: { $lte: endDate }
@@ -42,7 +46,8 @@ router.get('/date-range', async (req, res) => {
 
     res.json(bonuses);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('GET /bonus/date-range error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -219,16 +224,38 @@ router.get('/summary/:year', async (req, res) => {
 });
 
 // Calculate bonus by date range
+// NEW LOGIC: Deduction is relative to the worker with the fewest absents (threshold).
+// Workers with min absents get no penalty. Each extra absent above threshold incurs the penalty.
 router.post('/calculate-date-range', async (req, res) => {
   try {
-    const { startYear, startMonth, endYear, endMonth, deductionPerAbsentDay, deductAdvance } = req.body;
+    const { startYear, startMonth, endYear, endMonth } = req.body;
+    const deductionPerAbsentDay = Number(req.body.deductionPerAbsentDay) || 0;
+    const deductAdvance = Boolean(req.body.deductAdvance);
+
+    const sY = parseInt(startYear, 10);
+    const sM = parseInt(startMonth, 10);
+    const eY = parseInt(endYear, 10);
+    const eM = parseInt(endMonth, 10);
+
+    if (Number.isNaN(sY) || Number.isNaN(sM) || Number.isNaN(eY) || Number.isNaN(eM)) {
+      return res.status(400).json({ error: 'Invalid or missing startYear/startMonth/endYear/endMonth' });
+    }
+
+    if (sM < 1 || sM > 12 || eM < 1 || eM > 12) {
+      return res.status(400).json({ error: 'startMonth and endMonth must be between 1 and 12' });
+    }
+
+    const periodStart = new Date(sY, sM - 1, 1);
+    const periodEnd = new Date(eY, eM, 0, 23, 59, 59, 999);
+
+    if (periodStart > periodEnd) {
+      return res.status(400).json({ error: 'Start date must be before or equal to end date' });
+    }
 
     const workers = await Worker.find({ isActive: true });
-    const results = [];
 
-    const periodStart = new Date(startYear, startMonth - 1, 1);
-    const periodEnd = new Date(endYear, endMonth, 0, 23, 59, 59, 999);
-
+    // STEP 1: Gather attendance data for all workers
+    const workerData = [];
     for (const worker of workers) {
       const entries = await DailyEntry.find({
         worker: worker._id,
@@ -240,12 +267,28 @@ router.post('/calculate-date-range', async (req, res) => {
       ).length;
       const totalDaysAbsent = entries.filter(e => e.status === 'absent').length;
 
+      workerData.push({
+        worker,
+        totalDaysWorked,
+        totalDaysAbsent
+      });
+    }
+
+    // STEP 2: Find the minimum absents (threshold)
+    const minAbsent = workerData.length > 0
+      ? Math.min(...workerData.map(w => w.totalDaysAbsent))
+      : 0;
+
+    // STEP 3: Calculate bonus for each worker with relative penalty
+    const results = [];
+    for (const { worker, totalDaysWorked, totalDaysAbsent } of workerData) {
       // Calculate base bonus: 30 days × 8 hours × hourly_rate
       const baseBonusAmount = 30 * 8 * (worker.hourlyRate || 0);
-      
-      // Calculate penalties for absence
-      const absentPenalty = totalDaysAbsent * (deductionPerAbsentDay || 0);
-      
+
+      // Relative penalty: only absents above the minimum threshold are penalized
+      const extraAbsents = Math.max(0, totalDaysAbsent - minAbsent);
+      const absentPenalty = extraAbsents * deductionPerAbsentDay;
+
       // Get existing bonus record to preserve extraBonus and employeeDeposit
       const existingBonus = await Bonus.findOne({ 
         worker: worker._id,
@@ -254,26 +297,26 @@ router.post('/calculate-date-range', async (req, res) => {
       });
       const extraBonus = existingBonus?.extraBonus || 0;
       const employeeDeposit = existingBonus?.employeeDeposit || 0;
-      
+
       // Deduct advance if option is selected
       const advanceDeduction = deductAdvance ? worker.advanceBalance : 0;
-      
-      // Calculate final amount: base - penalties - advance + extra - deposit
+
+      // Calculate final amount: base - penalties - advance + extra
       const finalBonusAmount = Math.max(0, 
         baseBonusAmount - absentPenalty - advanceDeduction + extraBonus
       );
-      
+
       // Amount to give employee: finalBonus - employeeDeposit
       const amountToGiveEmployee = Math.max(0, finalBonusAmount - employeeDeposit);
 
+      // Use year + worker as the upsert filter to respect unique index on { year, worker }
       const bonus = await Bonus.findOneAndUpdate(
         { 
-          worker: worker._id,
-          periodStart,
-          periodEnd
+          year: eY,
+          worker: worker._id
         },
         {
-          year: endYear,
+          year: eY,
           worker: worker._id,
           periodStart,
           periodEnd,
@@ -281,7 +324,9 @@ router.post('/calculate-date-range', async (req, res) => {
           baseBonusAmount,
           totalDaysWorked,
           totalDaysAbsent,
-          absentPenaltyPerDay: deductionPerAbsentDay || 0,
+          minAbsentThreshold: minAbsent,
+          extraAbsents,
+          absentPenaltyPerDay: deductionPerAbsentDay,
           totalPenalty: absentPenalty,
           advanceDeduction,
           currentAdvanceBalance: worker.advanceBalance,
@@ -296,16 +341,15 @@ router.post('/calculate-date-range', async (req, res) => {
       results.push(bonus);
     }
 
-    const populatedResults = await Bonus.find({
-      periodStart,
-      periodEnd
-    })
+    // Return bonuses for the calculated year (matches the upsert filter)
+    const populatedResults = await Bonus.find({ year: eY })
       .populate('worker', 'name workerId hourlyRate advanceBalance')
       .sort({ 'worker.name': 1 });
 
     res.json(populatedResults);
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    console.error('POST /bonus/calculate-date-range error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -410,20 +454,37 @@ router.post('/add-employee-deposit/:bonusId', async (req, res) => {
 router.get('/summary-date-range', async (req, res) => {
   try {
     const { startYear, startMonth, endYear, endMonth } = req.query;
-    
-    const periodStart = new Date(startYear, startMonth - 1, 1);
-    const periodEnd = new Date(endYear, endMonth, 0, 23, 59, 59, 999);
-    
+
+    const sY = parseInt(startYear, 10);
+    const sM = parseInt(startMonth, 10);
+    const eY = parseInt(endYear, 10);
+    const eM = parseInt(endMonth, 10);
+
+    if (Number.isNaN(sY) || Number.isNaN(sM) || Number.isNaN(eY) || Number.isNaN(eM)) {
+      return res.status(400).json({ error: 'Invalid or missing startYear/startMonth/endYear/endMonth' });
+    }
+
+    if (sM < 1 || sM > 12 || eM < 1 || eM > 12) {
+      return res.status(400).json({ error: 'startMonth and endMonth must be between 1 and 12' });
+    }
+
+    const periodStart = new Date(sY, sM - 1, 1);
+    const periodEnd = new Date(eY, eM, 0, 23, 59, 59, 999);
+
+    if (periodStart > periodEnd) {
+      return res.status(400).json({ error: 'Start date must be before or equal to end date' });
+    }
+
     const bonuses = await Bonus.find({
       periodStart: { $gte: periodStart },
       periodEnd: { $lte: periodEnd }
     }).populate('worker', 'name workerId hourlyRate advanceBalance');
 
     const summary = {
-      startYear: parseInt(startYear),
-      startMonth: parseInt(startMonth),
-      endYear: parseInt(endYear),
-      endMonth: parseInt(endMonth),
+      startYear: sY,
+      startMonth: sM,
+      endYear: eY,
+      endMonth: eM,
       totalWorkers: bonuses.length,
       totalBonusAmount: bonuses.reduce((sum, b) => sum + b.finalBonusAmount, 0),
       totalBonusPaid: bonuses.filter(b => b.isPaid).reduce((sum, b) => sum + b.amountPaid, 0),
@@ -434,7 +495,8 @@ router.get('/summary-date-range', async (req, res) => {
 
     res.json(summary);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('GET /bonus/summary-date-range error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -442,10 +504,27 @@ router.get('/summary-date-range', async (req, res) => {
 router.get('/export/excel', async (req, res) => {
   try {
     const { startYear, startMonth, endYear, endMonth } = req.query;
-    
-    const periodStart = new Date(startYear, startMonth - 1, 1);
-    const periodEnd = new Date(endYear, endMonth, 0, 23, 59, 59, 999);
-    
+
+    const sY = parseInt(startYear, 10);
+    const sM = parseInt(startMonth, 10);
+    const eY = parseInt(endYear, 10);
+    const eM = parseInt(endMonth, 10);
+
+    if (Number.isNaN(sY) || Number.isNaN(sM) || Number.isNaN(eY) || Number.isNaN(eM)) {
+      return res.status(400).json({ error: 'Invalid or missing startYear/startMonth/endYear/endMonth' });
+    }
+
+    if (sM < 1 || sM > 12 || eM < 1 || eM > 12) {
+      return res.status(400).json({ error: 'startMonth and endMonth must be between 1 and 12' });
+    }
+
+    const periodStart = new Date(sY, sM - 1, 1);
+    const periodEnd = new Date(eY, eM, 0, 23, 59, 59, 999);
+
+    if (periodStart > periodEnd) {
+      return res.status(400).json({ error: 'Start date must be before or equal to end date' });
+    }
+
     const bonuses = await Bonus.find({
       periodStart: { $gte: periodStart },
       periodEnd: { $lte: periodEnd }
@@ -459,7 +538,7 @@ router.get('/export/excel', async (req, res) => {
 
     // Title
     worksheet.mergeCells('A1:L1');
-    worksheet.getCell('A1').value = `Bonus Payment (${months[startMonth - 1]} ${startYear} - ${months[endMonth - 1]} ${endYear})`;
+    worksheet.getCell('A1').value = `Bonus Payment (${months[sM - 1]} ${sY} - ${months[eM - 1]} ${eY})`;
     worksheet.getCell('A1').font = { bold: true, size: 16 };
     worksheet.getCell('A1').alignment = { horizontal: 'center' };
 
@@ -563,6 +642,25 @@ router.get('/export/excel', async (req, res) => {
     res.json({ base64, filename });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all bonuses for a year (placed at end to avoid shadowing routes like /date-range)
+router.get('/:year', async (req, res) => {
+  try {
+    const year = parseInt(req.params.year, 10);
+    if (Number.isNaN(year)) {
+      return res.status(400).json({ error: 'Invalid year parameter' });
+    }
+
+    const bonuses = await Bonus.find({ year })
+      .populate('worker', 'name workerId hourlyRate advanceBalance')
+      .sort({ 'worker.name': 1 });
+
+    res.json(bonuses);
+  } catch (error) {
+    console.error('GET /bonus/:year error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

@@ -33,6 +33,16 @@ const bonusSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  // Minimum absent threshold (lowest absents among all workers)
+  minAbsentThreshold: {
+    type: Number,
+    default: 0
+  },
+  // Extra absents above the threshold
+  extraAbsents: {
+    type: Number,
+    default: 0
+  },
   absentPenaltyPerDay: {
     type: Number,
     default: 0
