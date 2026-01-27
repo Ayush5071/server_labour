@@ -58,6 +58,7 @@ router.get('/date-range', async (req, res) => {
 // Final = Bonus - Deduction - AdvanceDeduction + ExtraBonus - EmployeeDeposit
 router.post('/calculate', async (req, res) => {
   try {
+    console.log('POST /bonus/calculate request body:', JSON.stringify(req.body, null, 2));
     const { year, deductionPerAbsentDay, deductAdvance, persist } = req.body;
 
     const workers = await Worker.find({ isActive: true });
@@ -86,17 +87,29 @@ router.post('/calculate', async (req, res) => {
       const absentPenalty = totalDaysAbsent * (deductionPerAbsentDay || 0);
       
       // Get existing bonus record to preserve extraBonus and employeeDeposit
-      const existingBonus = await Bonus.findOne({ year, worker: worker._id });
+      const existingBonus = await Bonus.findOne({ 
+        worker: worker._id,
+        periodStart: yearStart,
+        periodEnd: yearEnd
+      });
+      
+      console.log(`Worker ${worker.name} - existingBonus:`, existingBonus ? `ID: ${existingBonus._id}` : 'null');
+      
       const extraBonus = existingBonus?.extraBonus || 0;
       const employeeDeposit = existingBonus?.employeeDeposit || 0;
       
       // Do NOT deduct advance here; advance deduction is not part of bonus calculation
-      const finalBonusAmount = Math.max(0, baseBonusAmount - absentPenalty + extraBonus);
+
+      // Calculate final amount: base - penalties + extra
+      const finalBonusAmount = Math.max(0, 
+        baseBonusAmount - absentPenalty + extraBonus
+      );
 
       // Amount to give employee: finalBonus - employeeDeposit
       const amountToGiveEmployee = Math.max(0, finalBonusAmount - employeeDeposit);
 
       const bonusPayload = {
+        _id: existingBonus?._id, // Include ID if it exists so updates work
         year,
         worker: worker._id,
         hourlyRate: worker.hourlyRate,
@@ -109,8 +122,11 @@ router.post('/calculate', async (req, res) => {
         extraBonus,
         employeeDeposit,
         finalBonusAmount,
-        amountToGiveEmployee
+        amountToGiveEmployee,
+        currentAdvanceBalance: worker.advanceBalance
       };
+
+      console.log(`Worker ${worker.name} - bonusPayload._id:`, bonusPayload._id);
 
       if (persist) {
         // Persist to DB only when explicitly requested
@@ -195,6 +211,7 @@ router.get('/summary/:year', async (req, res) => {
 // Workers with min absents get no penalty. Each extra absent above threshold incurs the penalty.
 router.post('/calculate-date-range', async (req, res) => {
   try {
+    console.log('POST /bonus/calculate-date-range request:', JSON.stringify(req.body, null, 2));
     const { startYear, startMonth, endYear, endMonth, persist } = req.body;
     const deductionPerAbsentDay = Number(req.body.deductionPerAbsentDay) || 0;
     const deductAdvance = Boolean(req.body.deductAdvance);
@@ -260,6 +277,9 @@ router.post('/calculate-date-range', async (req, res) => {
         periodStart,
         periodEnd
       });
+      
+      console.log(`Worker ${worker.name} - existingBonus:`, existingBonus ? `ID: ${existingBonus._id}` : 'null');
+      
       const extraBonus = existingBonus?.extraBonus || 0;
       const employeeDeposit = existingBonus?.employeeDeposit || 0;
 
@@ -274,6 +294,7 @@ router.post('/calculate-date-range', async (req, res) => {
       const amountToGiveEmployee = Math.max(0, finalBonusAmount - employeeDeposit);
 
       const bonusPayload = {
+        _id: existingBonus?._id, // Include ID if it exists so updates work
         year: eY,
         worker: worker._id,
         periodStart,
@@ -291,6 +312,8 @@ router.post('/calculate-date-range', async (req, res) => {
         currentAdvanceBalance: worker.advanceBalance
       };
 
+      console.log(`Worker ${worker.name} - bonusPayload._id:`, bonusPayload._id);
+
       if (persist) {
         // Persist to DB only when explicitly requested
         const bonus = await Bonus.findOneAndUpdate(
@@ -306,6 +329,16 @@ router.post('/calculate-date-range', async (req, res) => {
       } else {
         results.push({ ...bonusPayload, worker: { _id: worker._id, name: worker.name, workerId: worker.workerId, hourlyRate: worker.hourlyRate, advanceBalance: worker.advanceBalance } });
       }
+    }
+
+    console.log(`Calculated ${results.length} bonuses. persist=${persist}`);
+    // Log sample result to check for _id
+    if (results.length > 0) {
+      console.log('Sample result payload (first item):', {
+        _id: results[0]._id,
+        workerName: results[0].worker?.name,
+        finalBonusAmount: results[0].finalBonusAmount
+      });
     }
 
     if (persist) {
@@ -355,23 +388,129 @@ router.put('/:id', async (req, res) => {
 // Add extra bonus to a worker's bonus
 router.post('/add-extra-bonus/:bonusId', async (req, res) => {
   try {
-    const { extraAmount, notes } = req.body;
+    console.log(`POST /bonus/add-extra-bonus/${req.params.bonusId}`, req.body);
     
-    if (!extraAmount || extraAmount <= 0) {
+    // Fix for "undefined" ID - try to create bonus record on the fly
+    if (req.params.bonusId === 'undefined' || req.params.bonusId === 'null') {
+      const { extraAmount, notes, workerId, year, periodStart, periodEnd, workerName } = req.body;
+      const amountVal = Number(extraAmount);
+      
+      if (!amountVal || amountVal <= 0) {
+        return res.status(400).json({ error: 'Extra bonus amount must be greater than 0' });
+      }
+
+      // Try to find worker by ID first, then by name if ID not provided
+      let worker = null;
+      if (workerId) {
+        worker = await Worker.findById(workerId);
+      } else if (workerName) {
+        worker = await Worker.findOne({ name: workerName });
+      }
+
+      if (!worker) {
+        // If we still can't find worker, return error with helpful message
+        return res.status(400).json({ 
+          error: 'Worker information not provided. The frontend needs to send workerId or workerName to create bonus record. Please calculate and save the report first, or contact support.' 
+        });
+      }
+
+      // Calculate proper period dates
+      const currentYear = year || new Date().getFullYear();
+      const startDate = periodStart ? new Date(periodStart) : new Date(currentYear, 3, 1); // Apr 1
+      const endDate = periodEnd ? new Date(periodEnd) : new Date(currentYear + 1, 2, 31); // Mar 31
+
+      // Try to find existing bonus first based on worker and approximate period
+      const existingBonus = await Bonus.findOne({
+        worker: worker._id,
+        year: currentYear,
+        $or: [
+          { periodStart: startDate, periodEnd: endDate },
+          { periodStart: { $lte: startDate }, periodEnd: { $gte: endDate } },
+          { year: currentYear } // Fallback to just year match
+        ]
+      });
+
+      if (existingBonus) {
+        console.log(`Found existing bonus for ${worker.name}, updating it instead of creating new one`);
+        
+        // Update the existing bonus
+        const currentExtra = Number(existingBonus.extraBonus) || 0;
+        const newExtraBonus = currentExtra + amountVal;
+        
+        const base = Number(existingBonus.baseBonusAmount) || 0;
+        const penalty = Number(existingBonus.totalPenalty) || 0;
+        const deposit = Number(existingBonus.employeeDeposit) || 0;
+
+        const newFinalBonusAmount = Math.max(0, base - penalty + newExtraBonus);
+        const newAmountToGiveEmployee = Math.max(0, newFinalBonusAmount - deposit);
+
+        const updatedBonus = await Bonus.findByIdAndUpdate(
+          existingBonus._id,
+          {
+            extraBonus: newExtraBonus,
+            finalBonusAmount: newFinalBonusAmount,
+            amountToGiveEmployee: newAmountToGiveEmployee,
+            notes: (existingBonus.notes ? existingBonus.notes + '\n' : '') + (notes || `Added ₹${amountVal} extra bonus`)
+          },
+          { new: true }
+        ).populate('worker', 'name workerId hourlyRate advanceBalance');
+
+        return res.json(updatedBonus);
+      }
+
+      // Create new bonus record if none exists
+      console.log(`Creating new bonus record for ${worker.name}`);
+      const newBonus = await Bonus.create({
+        year: currentYear,
+        worker: worker._id,
+        periodStart: startDate,
+        periodEnd: endDate,
+        hourlyRate: worker.hourlyRate || 0,
+        baseBonusAmount: 0, // Will be calculated later when full calculation is done
+        totalDaysWorked: 0,
+        totalDaysAbsent: 0,
+        absentPenaltyPerDay: 0,
+        totalPenalty: 0,
+        extraBonus: amountVal,
+        employeeDeposit: 0,
+        finalBonusAmount: amountVal, // Just the extra bonus for now
+        amountToGiveEmployee: amountVal,
+        currentAdvanceBalance: worker.advanceBalance || 0,
+        notes: notes || `Added ₹${amountVal} extra bonus`
+      });
+
+      const populatedBonus = await Bonus.findById(newBonus._id)
+        .populate('worker', 'name workerId hourlyRate advanceBalance');
+
+      return res.json(populatedBonus);
+    }
+
+    // Handle normal case with valid bonus ID
+    const { extraAmount, notes } = req.body;
+    const amountVal = Number(extraAmount);
+    
+    if (!amountVal || amountVal <= 0) {
+      console.log('Invalid extraAmount:', extraAmount);
       return res.status(400).json({ error: 'Extra bonus amount must be greater than 0' });
     }
 
     const bonus = await Bonus.findById(req.params.bonusId);
     if (!bonus) {
+      console.log('Bonus not found for ID:', req.params.bonusId);
       return res.status(404).json({ error: 'Bonus not found' });
     }
 
     // Update extra bonus and recalculate final amounts
-    const newExtraBonus = (bonus.extraBonus || 0) + extraAmount;
-    const newFinalBonusAmount = Math.max(0,
-      bonus.baseBonusAmount - bonus.totalPenalty + newExtraBonus
-    );
-    const newAmountToGiveEmployee = Math.max(0, newFinalBonusAmount - bonus.employeeDeposit);
+    const currentExtra = Number(bonus.extraBonus) || 0;
+    const newExtraBonus = currentExtra + amountVal;
+    
+    // Recalculate derived amounts
+    const base = Number(bonus.baseBonusAmount) || 0;
+    const penalty = Number(bonus.totalPenalty) || 0;
+    const deposit = Number(bonus.employeeDeposit) || 0;
+
+    const newFinalBonusAmount = Math.max(0, base - penalty + newExtraBonus);
+    const newAmountToGiveEmployee = Math.max(0, newFinalBonusAmount - deposit);
 
     const updatedBonus = await Bonus.findByIdAndUpdate(
       req.params.bonusId,
@@ -379,13 +518,14 @@ router.post('/add-extra-bonus/:bonusId', async (req, res) => {
         extraBonus: newExtraBonus,
         finalBonusAmount: newFinalBonusAmount,
         amountToGiveEmployee: newAmountToGiveEmployee,
-        notes: (bonus.notes ? bonus.notes + '\n' : '') + (notes || `Added ₹${extraAmount} extra bonus`)
+        notes: (bonus.notes ? bonus.notes + '\n' : '') + (notes || `Added ₹${amountVal} extra bonus`)
       },
       { new: true }
     ).populate('worker', 'name workerId hourlyRate advanceBalance');
 
     res.json(updatedBonus);
   } catch (error) {
+    console.error('Error in add-extra-bonus:', error);
     res.status(400).json({ error: error.message });
   }
 });
@@ -393,14 +533,112 @@ router.post('/add-extra-bonus/:bonusId', async (req, res) => {
 // Employee deposit towards advance repayment (deducted from bonus)
 router.post('/add-employee-deposit/:bonusId', async (req, res) => {
   try {
-    const { depositAmount, notes } = req.body;
+    console.log(`POST /bonus/add-employee-deposit/${req.params.bonusId}`, req.body);
     
-    if (!depositAmount || depositAmount <= 0) {
+    // Fix for "undefined" ID - try to find/create bonus record
+    if (req.params.bonusId === 'undefined' || req.params.bonusId === 'null') {
+      const { depositAmount, notes, workerId, year, periodStart, periodEnd, workerName } = req.body;
+      const amountVal = Number(depositAmount);
+      
+      if (!amountVal || amountVal <= 0) {
+        return res.status(400).json({ error: 'Deposit amount must be greater than 0' });
+      }
+
+      // Try to find worker by ID first, then by name if ID not provided
+      let worker = null;
+      if (workerId) {
+        worker = await Worker.findById(workerId);
+      } else if (workerName) {
+        worker = await Worker.findOne({ name: workerName });
+      }
+
+      if (!worker) {
+        return res.status(400).json({ 
+          error: 'Worker information not provided. The frontend needs to send workerId or workerName to create bonus record. Please calculate and save the report first, or contact support.' 
+        });
+      }
+
+      // Calculate proper period dates
+      const currentYear = year || new Date().getFullYear();
+      const startDate = periodStart ? new Date(periodStart) : new Date(currentYear, 3, 1); // Apr 1
+      const endDate = periodEnd ? new Date(periodEnd) : new Date(currentYear + 1, 2, 31); // Mar 31
+
+      // Try to find existing bonus first
+      const existingBonus = await Bonus.findOne({
+        worker: worker._id,
+        year: currentYear,
+        $or: [
+          { periodStart: startDate, periodEnd: endDate },
+          { periodStart: { $lte: startDate }, periodEnd: { $gte: endDate } },
+          { year: currentYear } // Fallback to just year match
+        ]
+      });
+
+      if (existingBonus) {
+        console.log(`Found existing bonus for ${worker.name}, updating deposit`);
+        
+        // Check if deposit doesn't exceed final bonus amount
+        if (amountVal > existingBonus.finalBonusAmount) {
+          return res.status(400).json({ 
+            error: `Deposit amount (₹${amountVal}) cannot exceed final bonus (₹${existingBonus.finalBonusAmount})` 
+          });
+        }
+
+        // Update employee deposit and recalculate amount to give
+        const newEmployeeDeposit = (existingBonus.employeeDeposit || 0) + amountVal;
+        const newAmountToGiveEmployee = Math.max(0, existingBonus.finalBonusAmount - newEmployeeDeposit);
+
+        const updatedBonus = await Bonus.findByIdAndUpdate(
+          existingBonus._id,
+          {
+            employeeDeposit: newEmployeeDeposit,
+            amountToGiveEmployee: newAmountToGiveEmployee,
+            notes: (existingBonus.notes ? existingBonus.notes + '\n' : '') + (notes || `Employee deposited ₹${amountVal}`)
+          },
+          { new: true }
+        ).populate('worker', 'name workerId hourlyRate advanceBalance');
+
+        return res.json(updatedBonus);
+      }
+
+      // Create new bonus record if none exists
+      console.log(`Creating new bonus record for ${worker.name} with deposit`);
+      const newBonus = await Bonus.create({
+        year: currentYear,
+        worker: worker._id,
+        periodStart: startDate,
+        periodEnd: endDate,
+        hourlyRate: worker.hourlyRate || 0,
+        baseBonusAmount: 0,
+        totalDaysWorked: 0,
+        totalDaysAbsent: 0,
+        absentPenaltyPerDay: 0,
+        totalPenalty: 0,
+        extraBonus: 0,
+        employeeDeposit: amountVal,
+        finalBonusAmount: 0,
+        amountToGiveEmployee: Math.max(0, 0 - amountVal), // Will be 0 since finalBonus is 0
+        currentAdvanceBalance: worker.advanceBalance || 0,
+        notes: notes || `Employee deposited ₹${amountVal}`
+      });
+
+      const populatedBonus = await Bonus.findById(newBonus._id)
+        .populate('worker', 'name workerId hourlyRate advanceBalance');
+
+      return res.json(populatedBonus);
+    }
+
+    // Handle normal case with valid bonus ID
+    const { depositAmount, notes } = req.body;
+    const amountVal = Number(depositAmount);
+    
+    if (!amountVal || amountVal <= 0) {
       return res.status(400).json({ error: 'Deposit amount must be greater than 0' });
     }
 
     const bonus = await Bonus.findById(req.params.bonusId);
     if (!bonus) {
+      console.log('Bonus not found for ID:', req.params.bonusId);
       return res.status(404).json({ error: 'Bonus not found' });
     }
 
@@ -427,6 +665,7 @@ router.post('/add-employee-deposit/:bonusId', async (req, res) => {
 
     res.json(updatedBonus);
   } catch (error) {
+    console.error('Error in add-employee-deposit:', error);
     res.status(400).json({ error: error.message });
   }
 });
@@ -460,7 +699,7 @@ router.get('/summary-date-range', async (req, res) => {
     const bonuses = await Bonus.find({
       periodStart: { $gte: periodStart },
       periodEnd: { $lte: periodEnd }
-    }).populate('worker', 'name workerId hourlyRate advanceBalance');
+    }).populate('worker', 'name workerId hourlyRate advanceBalance bankDetails');
 
     const summary = {
       startYear: sY,
@@ -671,7 +910,7 @@ router.post('/export/excel', async (req, res) => {
       'Penalty',
       'Current Advance Due',
       'Extra Bonus',
-      'Employee Deposit',
+      'Deposit',
       'Final Amount'
     ]);
 
@@ -681,31 +920,45 @@ router.post('/export/excel', async (req, res) => {
     let totalFinal = 0;
     let totalDeposit = 0;
     let totalAdvanceDue = 0;
+    let totalBaseBonusAmount = 0;
+    let totalPenalty = 0;
+    let totalExtraBonus = 0;
 
     const rows = Array.isArray(records) && records.length > 0 ? records : [];
 
     rows.forEach((rec, index) => {
-      const currentAdvanceDue = rec.currentAdvanceBalance || rec.currentAdvanceDue || 0;
-      const deposit = rec.deposit || 0;
-      const finalAmount = rec.amountToGiveEmployee ?? rec.finalBonusAmount ?? 0;
+      const currentAdvanceDue = Number(rec.currentAdvanceBalance ?? rec.currentAdvanceDue) || 0;
+      const deposit = Number(rec.deposit ?? rec.employeeDeposit) || 0;
+      
+      const base = Number(rec.baseBonusAmount) || 0;
+      const penalty = Number(rec.totalPenalty) || 0;
+      const extra = Number(rec.extraBonus) || 0;
+      
+      // Recalculate Gross and Net to ensure accuracy even if UI sent stale totals
+      const grossBonus = Math.max(0, base - penalty + extra);
+      const finalAmount = Math.max(0, grossBonus - deposit);
 
       const row = worksheet.addRow([
         index + 1,
         rec.workerId || '',
         rec.workerName || rec.workerName || '',
         rec.hourlyRate || 0,
-        rec.baseBonusAmount || 0,
+        base,
         rec.totalDaysAbsent || 0,
-        rec.totalPenalty || 0,
+        penalty,
         currentAdvanceDue,
-        rec.extraBonus || 0,
+        extra,
         deposit,
         finalAmount
       ]);
 
+      // Update totals
       totalFinal += finalAmount;
       totalDeposit += deposit;
       totalAdvanceDue += currentAdvanceDue;
+      totalBaseBonusAmount += base;
+      totalPenalty += penalty;
+      totalExtraBonus += extra;
 
       row.eachCell((cell) => {
         cell.border = {
@@ -723,9 +976,19 @@ router.post('/export/excel', async (req, res) => {
 
     // Total row
     worksheet.addRow([]);
-    const totalRow = worksheet.addRow(['', '', '', '', '', '', '', totalAdvanceDue, '', totalDeposit, totalFinal]);
+    const totalRow = worksheet.addRow([
+      '', '', '', '',
+      totalBaseBonusAmount,
+      '',
+      totalPenalty,
+      totalAdvanceDue,
+      totalExtraBonus,
+      totalDeposit,
+      totalFinal
+    ]);
     totalRow.font = { bold: true };
 
+    // Column widths
     worksheet.columns = [
       { width: 8 },
       { width: 12 },
@@ -734,9 +997,9 @@ router.post('/export/excel', async (req, res) => {
       { width: 12 },
       { width: 10 },
       { width: 10 },
-      { width: 14 },
       { width: 12 },
-      { width: 14 },
+      { width: 12 },
+      { width: 12 },
       { width: 14 }
     ];
 
@@ -746,6 +1009,7 @@ router.post('/export/excel', async (req, res) => {
 
     res.json({ base64: base642, filename: filename2 });
   } catch (error) {
+    console.error('POST export excel error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -772,6 +1036,10 @@ router.get('/:year', async (req, res) => {
 // Save bonus report to history
 router.post('/save-bonus-history', async (req, res) => {
   try {
+    console.log('POST /bonus/save-bonus-history', { 
+      year: req.body.year,
+      recordsCount: req.body.records?.length 
+    });
     const { year, periodStart, periodEnd, records, notes } = req.body;
 
     if (!year || !periodStart || !periodEnd || !records || !Array.isArray(records)) {
@@ -785,41 +1053,49 @@ router.post('/save-bonus-history', async (req, res) => {
       const worker = await Worker.findById(record.workerId);
       if (!worker) continue;
 
-// If worker has a deposit, record it in the Advance system (same behavior as salary reports)
-    if (record.deposit && record.deposit > 0) {
-      const newBalance = Math.max(0, worker.advanceBalance - record.deposit);
+      const depositAmount = Number(record.deposit ?? record.employeeDeposit) || 0;
+      const extraBonusAmount = Number(record.extraBonus ?? record.extraBonusAmount) || 0;
+      const baseBonusAmount = Number(record.baseBonusAmount) || 0;
+      const totalPenalty = Number(record.totalPenalty) || 0;
 
-      // Create advance record for the deposit
-      await Advance.create({
-        worker: worker._id,
-        type: 'deposit',
-        amount: record.deposit,
-        date: new Date(),
-        notes: `${worker.name} deposited ₹${record.deposit} from bonus`,
-        balanceAfter: newBalance
-      });
+      // Recalculate derived amounts to ensure consistency with UI edits
+      // Gross = Base - Penalty + Extra
+      // Net = Gross - Deposit
+      const finalBonusAmount = Math.max(0, baseBonusAmount - totalPenalty + extraBonusAmount);
+      const amountToGiveEmployee = Math.max(0, finalBonusAmount - depositAmount);
+      
+      if (depositAmount > 0) {
+        const newBalance = Math.max(0, worker.advanceBalance - depositAmount);
 
-      // Update worker's advance balance
-      await Worker.findByIdAndUpdate(worker._id, {
-        advanceBalance: newBalance,
-        $inc: { totalAdvanceRepaid: record.deposit }
-      });
-    }
+        // Create advance record for the deposit
+        await Advance.create({
+          worker: worker._id,
+          type: 'deposit',
+          amount: depositAmount,
+          date: new Date(),
+          notes: `${worker.name} deposited ₹${depositAmount} from bonus`,
+          balanceAfter: newBalance
+        });
+
+        await Worker.findByIdAndUpdate(worker._id, {
+          advanceBalance: newBalance,
+          $inc: { totalAdvanceRepaid: depositAmount }
+        });
+      }
 
       processedRecords.push({
         worker: worker._id,
         workerName: worker.name,
         workerId: worker.workerId,
         hourlyRate: worker.hourlyRate,
-        baseBonusAmount: record.baseBonusAmount || 0,
+        baseBonusAmount,
         totalDaysWorked: record.totalDaysWorked || 0,
         totalDaysAbsent: record.totalDaysAbsent || 0,
-        totalPenalty: record.totalPenalty || 0,
-        // advanceDeduction intentionally omitted
-        extraBonus: record.extraBonus || 0,
-        deposit: record.deposit || 0,
-        finalBonusAmount: record.finalBonusAmount || 0,
-        amountToGiveEmployee: record.amountToGiveEmployee || 0,
+        totalPenalty,
+        extraBonus: extraBonusAmount,
+        deposit: depositAmount,
+        finalBonusAmount, // This is Gross (before deposit)
+        amountToGiveEmployee, // This is Net (after deposit)
         advanceBalanceAtSave: worker.advanceBalance
       });
     }

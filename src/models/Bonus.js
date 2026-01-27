@@ -95,9 +95,35 @@ const bonusSchema = new mongoose.Schema({
   notes: {
     type: String,
     trim: true
+  },
+  baseBonus: { type: Number, default: 0 },
+  penalty: { type: Number, default: 0 },
+  deposit: { type: Number, default: 0 },
+  finalAmount: { type: Number, default: 0 },
+  absentDays: { type: Number, default: 0 },
+  transactions: [{
+    type: { type: String, enum: ['bonus-deposit', 'bonus-refund', 'extra-bonus', 'other'] },
+    amount: Number,
+    date: Date,
+    note: String
+  }],
+  period: {
+    startDate: Date,
+    endDate: Date
   }
 }, {
   timestamps: true
+});
+
+// Pre-save hook to always recalculate finalAmount
+bonusSchema.pre('save', function(next) {
+  // Final Amount = Base - Penalty + ExtraBonus - Deposit
+  this.finalAmount = 
+    (this.baseBonus || 0) - 
+    (this.penalty || 0) + 
+    (this.extraBonus || 0) - 
+    (this.deposit || 0);
+  next();
 });
 
 bonusSchema.index({ year: 1, worker: 1 });

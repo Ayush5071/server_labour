@@ -355,294 +355,419 @@ router.post('/deposit', async (req, res) => {
   }
 });
 
+// Find or add the POST route for saving bonus deposits
+router.post('/bonus/:id/deposit', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { amount, extraBonus } = req.body; // Accept extraBonus as well
+
+    // Dynamic import: if Bonus model is not present, return a clear error (won't crash on import)
+    let Bonus;
+    try {
+      const mod = await import('../models/Bonus.js');
+      Bonus = mod.default || mod.Bonus || mod;
+    } catch (e) {
+      return res.status(501).json({ error: 'Bonus model not available on server', details: e.message });
+    }
+
+    const bonusRecord = await Bonus.findById(id);
+    if (!bonusRecord) {
+      return res.status(404).json({ error: 'Bonus record not found' });
+    }
+
+    // Update extraBonus if provided
+    if (extraBonus !== undefined && extraBonus !== null) {
+      bonusRecord.extraBonus = extraBonus;
+    }
+
+    // Add to existing deposit if amount provided
+    if (amount && amount > 0) {
+      bonusRecord.deposit = (bonusRecord.deposit || 0) + amount;
+
+      // Add transaction record
+      bonusRecord.transactions = bonusRecord.transactions || [];
+      bonusRecord.transactions.push({
+        type: 'bonus-deposit',
+        amount,
+        date: new Date(),
+        note: 'Deposit from bonus'
+      });
+    }
+
+    // Recalculate Final Amount: Base - Penalty + ExtraBonus - Deposit
+    // (DO NOT include currentAdvance as per your request)
+    bonusRecord.finalAmount =
+      (bonusRecord.baseBonus || 0) -
+      (bonusRecord.penalty || 0) +
+      (bonusRecord.extraBonus || 0) -
+      (bonusRecord.deposit || 0);
+
+    await bonusRecord.save();
+
+    res.json({ success: true, bonusRecord });
+  } catch (error) {
+    console.error('Deposit save error:', error);
+    res.status(500).json({ error: 'Failed to save deposit', details: error.message });
+  }
+});
+
+// Update bonus record (for extraBonus and other fields)
+router.put('/bonus/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { baseBonus, penalty, extraBonus, deposit } = req.body;
+
+    // Dynamic import
+    let Bonus;
+    try {
+      const mod = await import('../models/Bonus.js');
+      Bonus = mod.default || mod.Bonus || mod;
+    } catch (e) {
+      return res.status(501).json({ error: 'Bonus model not available on server', details: e.message });
+    }
+
+    const bonusRecord = await Bonus.findById(id);
+    if (!bonusRecord) {
+      return res.status(404).json({ error: 'Bonus record not found' });
+    }
+
+    // Update fields if provided
+    if (baseBonus !== undefined) bonusRecord.baseBonus = baseBonus;
+    if (penalty !== undefined) bonusRecord.penalty = penalty;
+    if (extraBonus !== undefined) bonusRecord.extraBonus = extraBonus;
+    if (deposit !== undefined) bonusRecord.deposit = deposit;
+
+    // Recalculate Final Amount: Base - Penalty + ExtraBonus - Deposit
+    bonusRecord.finalAmount =
+      (bonusRecord.baseBonus || 0) -
+      (bonusRecord.penalty || 0) +
+      (bonusRecord.extraBonus || 0) -
+      (bonusRecord.deposit || 0);
+
+    await bonusRecord.save();
+
+    res.json({ success: true, bonusRecord });
+  } catch (error) {
+    console.error('Bonus update error:', error);
+    res.status(500).json({ error: 'Failed to update bonus', details: error.message });
+  }
+});
+
+// Save bonus with deposit (like salary deposit - subtract from total)
+router.post('/bonus/:id/save', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { deposit, extraBonus } = req.body;
+
+    // Dynamic import
+    let Bonus;
+    try {
+      const mod = await import('../models/Bonus.js');
+      Bonus = mod.default || mod.Bonus || mod;
+    } catch (e) {
+      return res.status(501).json({ error: 'Bonus model not available on server', details: e.message });
+    }
+
+    const bonusRecord = await Bonus.findById(id);
+    if (!bonusRecord) {
+      return res.status(404).json({ error: 'Bonus record not found' });
+    }
+
+    const oldDeposit = bonusRecord.deposit || 0;
+    const oldExtraBonus = bonusRecord.extraBonus || 0;
+
+    // Update extraBonus if provided
+    if (extraBonus !== undefined && extraBonus !== null) {
+      bonusRecord.extraBonus = extraBonus;
+    }
+
+    // Update deposit if provided (this replaces the total deposit, not adds to it)
+    if (deposit !== undefined && deposit !== null) {
+      const depositDiff = deposit - oldDeposit;
+      bonusRecord.deposit = deposit;
+
+      // Add transaction if deposit changed
+      if (depositDiff !== 0) {
+        bonusRecord.transactions = bonusRecord.transactions || [];
+        bonusRecord.transactions.push({
+          type: depositDiff > 0 ? 'bonus-deposit' : 'bonus-refund',
+          amount: Math.abs(depositDiff),
+          date: new Date(),
+          note: depositDiff > 0 ? 'Deposit added' : 'Deposit reduced'
+        });
+      }
+    }
+
+    // Recalculate Final Amount: Base - Penalty + ExtraBonus - Deposit
+    bonusRecord.finalAmount =
+      (bonusRecord.baseBonus || 0) -
+      (bonusRecord.penalty || 0) +
+      (bonusRecord.extraBonus || 0) -
+      (bonusRecord.deposit || 0);
+
+    await bonusRecord.save();
+
+    res.json({ 
+      success: true, 
+      bonusRecord,
+      message: `Saved. Final Amount: ${bonusRecord.finalAmount}`
+    });
+  } catch (error) {
+    console.error('Bonus save error:', error);
+    res.status(500).json({ error: 'Failed to save bonus', details: error.message });
+  }
+});
+
 // Export Active Workers Dues Chart - Like the physical ledger in the image
 // Format: S.No | Name | Advance (initial) | AD/DP columns for each transaction | Balance
 router.get('/export/active', async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
     
-    // Get active workers who have advances
-    const workers = await Worker.find({ 
-      isActive: true,
+    if (!startDate || !endDate) {
+      return res.status(400).json({ error: 'startDate and endDate are required' });
+    }
+
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return res.status(400).json({ error: 'Invalid date format' });
+    }
+
+    if (end < start) {
+      return res.status(400).json({ error: 'endDate must be after startDate' });
+    }
+
+    // Get all workers with advances
+    const workers = await Worker.find({
       $or: [
         { advanceBalance: { $gt: 0 } },
         { totalAdvanceTaken: { $gt: 0 } }
       ]
-    })
-      .select('name workerId advanceBalance totalAdvanceTaken totalAdvanceRepaid')
+    }).select('name workerId advanceBalance hourlyRate')
       .sort({ name: 1 });
 
-    // Get all advances for these workers
-    const filter = {};
-    if (startDate || endDate) {
-      filter.date = {};
-      if (startDate) filter.date.$gte = new Date(startDate);
-      if (endDate) {
-        const end = new Date(endDate);
-        end.setHours(23, 59, 59, 999);
-        filter.date.$lte = end;
-      }
-    }
+    // Get all advances in date range
+    const advances = await Advance.find({
+      date: { $gte: start, $lte: end }
+    }).populate('worker', 'name workerId')
+      .sort({ date: 1 });
 
-    const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'Worker Management System';
-    workbook.created = new Date();
-
-    const worksheet = workbook.addWorksheet('Labour Dues Chart');
-
-    // Format dates for title
-    const startDateStr = startDate ? new Date(startDate).toLocaleDateString('en-IN') : 'Beginning';
-    const endDateStr = endDate ? new Date(endDate).toLocaleDateString('en-IN') : new Date().toLocaleDateString('en-IN');
-
-    // Title
-    worksheet.mergeCells('A1:Z1');
-    worksheet.getCell('A1').value = `Labour Dues Chart 2024-2025 (${endDateStr})`;
-    worksheet.getCell('A1').font = { bold: true, size: 14 };
-    worksheet.getCell('A1').alignment = { horizontal: 'center' };
-
-    worksheet.addRow([]);
-
-    // Build header row dynamically based on actual transactions in the selected range
-    // Fetch advances for these workers inside the date filter and group by worker
-    const workerIds = workers.map(w => w._id);
-    const allAdvances = await Advance.find({
-      worker: { $in: workerIds },
-      ...(filter.date && { date: filter.date })
-    }).sort({ date: 1 });
-
-    const advancesByWorker = {};
-    allAdvances.forEach(a => {
-      const id = a.worker.toString();
-      advancesByWorker[id] = advancesByWorker[id] || [];
-      advancesByWorker[id].push(a);
+    // Group advances by worker
+    const workerAdvancesMap = new Map();
+    workers.forEach(w => {
+      workerAdvancesMap.set(w._id.toString(), {
+        worker: w,
+        transactions: []
+      });
     });
 
-    // Helper to compute number of AD/DP pairs that will be produced for a worker
-    const computePairsCount = (transactions) => {
-      let pairs = 0;
-      let currentAd = null;
-      let currentDp = null;
-      transactions.forEach((t, idx) => {
-        if (t.type === 'advance') {
-          if (idx === 0 && pairs === 0) {
-            // first advance goes to Advance column, not a pair
-            // leave as-is
-          } else {
-            if (currentAd !== null || currentDp !== null) {
-              pairs++;
-              currentAd = null;
-              currentDp = null;
-            }
-            currentAd = t.amount;
-          }
-        } else {
-          currentDp = t.amount;
-          if (currentAd !== null || currentDp !== null) {
-            pairs++;
-            currentAd = null;
-            currentDp = null;
-          }
-        }
-      });
-      if (currentAd !== null || currentDp !== null) pairs++;
-      return pairs;
-    };
+    advances.forEach(adv => {
+      const wId = adv.worker?._id?.toString();
+      if (wId && workerAdvancesMap.has(wId)) {
+        workerAdvancesMap.get(wId).transactions.push(adv);
+      }
+    });
 
-    // Determine max pairs needed across workers (cap to reasonable limit to avoid huge spreadsheets)
-    const pairsCounts = Object.values(advancesByWorker).map(tx => computePairsCount(tx));
-    const maxPairs = Math.min(20, pairsCounts.length ? Math.max(...pairsCounts) : 0);
-
-    const headers = ['Sl.No.', 'NAME', 'Advance'];
-    for (let i = 0; i < maxPairs; i++) {
-      headers.push('AD');
-      headers.push('DP');
+    // Compute per-worker advance/deposit lists and max pairs (ADn/DPn)
+    let maxPairs = 0;
+    workerAdvancesMap.forEach(data => {
+      const advList = data.transactions.filter(t => t.type === 'advance').map(t => t.amount || 0);
+      const depList = data.transactions.filter(t => t.type === 'deposit' || t.type === 'repayment').map(t => t.amount || 0);
+      data.advList = advList;
+      data.depList = depList;
+      data.totalAdvance = advList.reduce((s, v) => s + v, 0);
+      data.totalDeposit = depList.reduce((s, v) => s + v, 0);
+      if (Math.max(advList.length, depList.length) > maxPairs) {
+        maxPairs = Math.max(advList.length, depList.length);
+      }
+    });
+ 
+    // Build Excel workbook (headers include AD1/DP1, AD2/DP2 ... up to maxPairs)
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Labour Dues Chart');
+ 
+    // Title
+    const titleText = `Labour Dues Chart ${start.getFullYear()}-${end.getFullYear()} (${start.toLocaleDateString('en-IN')})`;
+    worksheet.mergeCells(1, 1, 1, 3 + (maxPairs * 2) + 1); // S.No, Name, Advance + (ADn/DPn pairs) + Balance
+    worksheet.getCell('A1').value = titleText;
+    worksheet.getCell('A1').font = { bold: true, size: 16 };
+    worksheet.getCell('A1').alignment = { horizontal: 'center' };
+ 
+    worksheet.addRow([]);
+ 
+    // Build headers: S.No | Name | Advance | AD1 | DP1 | AD2 | DP2 ... | Balance
+    const headers = ['S.No', 'Name', 'Advance'];
+    for (let i = 1; i <= maxPairs; i++) {
+      headers.push(`AD${i}`);
+      headers.push(`DP${i}`);
     }
     headers.push('Balance');
-
+ 
     const headerRow = worksheet.addRow(headers);
-    headerRow.font = { bold: true, size: 9 };
-    headerRow.eachCell((cell, colNumber) => {
+    headerRow.font = { bold: true };
+    headerRow.eachCell((cell) => {
       cell.fill = {
         type: 'pattern',
         pattern: 'solid',
-        fgColor: { argb: colNumber <= 3 || colNumber === headers.length ? 'FF4472C4' : 'FFFFC000' } // Blue for first cols and balance, Yellow for AD/DP
+        fgColor: { argb: 'FFE0E0E0' }
       };
-      cell.font = { bold: true, size: 9, color: { argb: colNumber <= 3 || colNumber === headers.length ? 'FFFFFFFF' : 'FF000000' } };
       cell.border = {
         top: { style: 'thin' },
         left: { style: 'thin' },
         bottom: { style: 'thin' },
         right: { style: 'thin' }
       };
-      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      cell.alignment = { horizontal: 'center' };
     });
+ 
+    // Data rows - one row per worker
+    let sNo = 1;
+    workerAdvancesMap.forEach((data) => {
+      const { worker, transactions, advList, depList, totalAdvance, totalDeposit } = data;
+      // Calculate initial advance (first advance or total advances)
+      const advanceTransactions = transactions.filter(t => t.type === 'advance');
+      const depositTransactions = transactions.filter(t => t.type === 'deposit' || t.type === 'repayment');
 
-    // Data rows for each worker
-    for (let wIndex = 0; wIndex < workers.length; wIndex++) {
-      const worker = workers[wIndex];
-      
-      // Reuse pre-fetched transactions grouped by worker (if any)
-      const transactions = (advancesByWorker[worker._id.toString()] || []);
+      const initialAdvance = advanceTransactions.length > 0 ? advanceTransactions[0].amount : 0;
 
       // Build row data
-      const rowData = [wIndex + 1, worker.name, '']; // S.No, Name, Advance (filled if first transaction is advance)
-      
-      // Separate advances (AD) and deposits (DP) chronologically
-      let initialAdvance = 0;
-      const adDpPairs = [];
-      let currentAd = '';
-      let currentDp = '';
-      
-      transactions.forEach((t, idx) => {
-        if (t.type === 'advance') {
-          if (idx === 0 && adDpPairs.length === 0) {
-            // First transaction is an advance - put in Advance column
-            initialAdvance = t.amount;
-          } else {
-            // Subsequent advance - add as AD
-            if (currentAd || currentDp) {
-              adDpPairs.push({ ad: currentAd, dp: currentDp });
-              currentAd = '';
-              currentDp = '';
-            }
-            currentAd = t.amount;
-          }
-        } else {
-          // Deposit or repayment
-          currentDp = t.amount;
-          if (currentAd || currentDp) {
-            adDpPairs.push({ ad: currentAd, dp: currentDp });
-            currentAd = '';
-            currentDp = '';
-          }
-        }
-      });
-      
-      // Push any remaining
-      if (currentAd || currentDp) {
-        adDpPairs.push({ ad: currentAd, dp: currentDp });
+      const rowData = [
+        sNo,
+        worker.name,
+        initialAdvance > 0 ? initialAdvance : ''
+      ];
+
+      // Add AD/DP columns for each transaction (skip first advance as it's in Advance column)
+      for (let i = 0; i < maxPairs; i++) {
+        rowData.push(advList[i] ?? '');
+        rowData.push(depList[i] ?? '');
       }
 
-      rowData[2] = initialAdvance || ''; // Advance column
-      
-      // Fill AD/DP columns
-      for (let i = 0; i < maxTransactions; i++) {
-        if (i < adDpPairs.length) {
-          rowData.push(adDpPairs[i].ad || '');
-          rowData.push(adDpPairs[i].dp || '');
-        } else {
-          rowData.push('');
-          rowData.push('');
-        }
-      }
-      
-      // Balance at the end
-      rowData.push(worker.advanceBalance);
+      // Balance = totalAdvance - totalDeposit
+      const balance = (totalAdvance || 0) - (totalDeposit || 0);
+      rowData.push(balance);
 
-      const dataRow = worksheet.addRow(rowData);
-      
-      // Style the row
-      dataRow.eachCell((cell, colNumber) => {
+      const row = worksheet.addRow(rowData);
+
+      // Style cells
+      row.eachCell((cell, colNumber) => {
         cell.border = {
           top: { style: 'thin' },
           left: { style: 'thin' },
           bottom: { style: 'thin' },
           right: { style: 'thin' }
         };
-        cell.alignment = { horizontal: colNumber <= 2 ? 'left' : 'center', vertical: 'middle' };
-        cell.font = { size: 9 };
+        cell.alignment = { horizontal: 'center' };
 
-        // Color coding
-        if (colNumber === 3 && cell.value) {
-          // Initial advance - light red
-          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFCCCC' } };
-        } else if (colNumber > 3 && colNumber < headers.length) {
-          const isAdColumn = (colNumber - 4) % 2 === 0;
-          if (cell.value) {
-            if (isAdColumn) {
-              // AD column with value - light red
-              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFCCCC' } };
-            } else {
-              // DP column with value - light green
-              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFC8E6C9' } };
-            }
+        // Color ADn/DPn columns: AD columns are at indices 4,6,8..., DP columns 5,7,9...
+        const adStartCol = 4; // A:1, S.No:1, Name:2, Advance:3 => AD1 at col 4
+        if (maxPairs > 0 && colNumber >= adStartCol && colNumber < adStartCol + maxPairs * 2) {
+          const offset = colNumber - adStartCol;
+          if (offset % 2 === 0) {
+            // AD column
+            cell.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: 'FFFFCDD2' } // Light red for AD
+            };
+          } else {
+            // DP column
+            cell.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: 'FFFFF9C4' } // Light yellow for DP
+            };
           }
-        } else if (colNumber === headers.length) {
-          // Balance column - yellow background
-          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFC000' } };
-          cell.font = { bold: true, size: 9 };
         }
       });
-    }
 
-    // Set column widths
-    worksheet.getColumn(1).width = 6;  // S.No
-    worksheet.getColumn(2).width = 15; // Name
-    worksheet.getColumn(3).width = 10; // Advance
-    for (let i = 4; i <= 3 + maxTransactions * 2; i++) {
-      worksheet.getColumn(i).width = 6; // AD/DP columns
+      sNo++;
+    });
+
+    // Column widths
+    const colWidths = [{ width: 6 }, { width: 20 }, { width: 12 }];
+    for (let i = 0; i < maxPairs; i++) {
+      colWidths.push({ width: 10 }, { width: 10 }); // ADn, DPn
     }
-    worksheet.getColumn(headers.length).width = 10; // Balance
+    colWidths.push({ width: 12 });
+    worksheet.columns = colWidths;
 
     const buffer = await workbook.xlsx.writeBuffer();
     const base64 = Buffer.from(buffer).toString('base64');
-    const filename = `labour_dues_active_${endDateStr.replace(/\//g, '-')}.xlsx`;
+    const filename = `labour_dues_chart_${start.toISOString().split('T')[0]}_to_${end.toISOString().split('T')[0]}.xlsx`;
 
     res.json({ base64, filename });
   } catch (error) {
     console.error('Export active error:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Failed to export active advances', details: error.message });
   }
 });
 
-// Export Overall - All workers who ever took advance with summary
+// Export Overall - Simple summary: one row per worker with Advance, Deposit, Dues Left
 router.get('/export/overall', async (req, res) => {
   try {
-    // Get all workers who have ever taken advance
-    const workers = await Worker.find({
-      $or: [
-        { advanceBalance: { $gt: 0 } },
-        { totalAdvanceTaken: { $gt: 0 } }
-      ]
-    })
-      .select('name workerId advanceBalance totalAdvanceTaken totalAdvanceRepaid isActive')
-      .sort({ name: 1 });
+    const { startDate, endDate } = req.query;
+    const filter = {};
+    if (startDate || endDate) {
+      filter.date = {};
+      if (startDate) filter.date.$gte = new Date(startDate);
+      if (endDate) {
+        const e = new Date(endDate);
+        e.setHours(23, 59, 59, 999);
+        filter.date.$lte = e;
+      }
+    }
 
+    // Get all advances
+    const advances = await Advance.find(filter)
+      .populate('worker', 'name workerId advanceBalance')
+      .sort({ date: -1 });
+
+    // Aggregate by worker: total advance, total deposit, dues left
+    const workerSummary = new Map();
+    advances.forEach(adv => {
+      const wId = adv.worker?._id?.toString() || 'unknown';
+      const existing = workerSummary.get(wId) || {
+        name: adv.worker?.name || '',
+        workerId: adv.worker?.workerId || '',
+        totalAdvance: 0,
+        totalDeposit: 0
+      };
+
+      if (adv.type === 'advance') {
+        existing.totalAdvance += adv.amount || 0;
+      } else if (adv.type === 'deposit' || adv.type === 'repayment') {
+        existing.totalDeposit += adv.amount || 0;
+      }
+
+      workerSummary.set(wId, existing);
+    });
+
+    // Build Excel
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'Worker Management System';
-    workbook.created = new Date();
-
-    const worksheet = workbook.addWorksheet('Overall Dues Summary');
-
-    const dateStr = new Date().toLocaleDateString('en-IN');
+    const worksheet = workbook.addWorksheet('Overall Summary');
 
     // Title
-    worksheet.mergeCells('A1:G1');
-    worksheet.getCell('A1').value = `Overall Labour Dues Summary (${dateStr})`;
+    const startStr = startDate ? new Date(startDate).toLocaleDateString('en-IN') : 'Beginning';
+    const endStr = endDate ? new Date(endDate).toLocaleDateString('en-IN') : 'Present';
+    worksheet.mergeCells('A1:E1');
+    worksheet.getCell('A1').value = `Advance Summary (${startStr} to ${endStr})`;
     worksheet.getCell('A1').font = { bold: true, size: 16 };
     worksheet.getCell('A1').alignment = { horizontal: 'center' };
 
     worksheet.addRow([]);
 
-    // Headers
-    const headerRow = worksheet.addRow([
-      'S.No',
-      'Worker ID',
-      'Worker Name',
-      'Status',
-      'Total Advance Taken',
-      'Total Repaid/Deposited',
-      'Current Balance'
-    ]);
-
+    // Headers: S.No | Name | Advance | Deposit | Dues Left
+    const headerRow = worksheet.addRow(['S.No', 'Name', 'Advance', 'Deposit', 'Dues Left']);
     headerRow.font = { bold: true };
     headerRow.eachCell((cell) => {
       cell.fill = {
         type: 'pattern',
         pattern: 'solid',
-        fgColor: { argb: 'FF4472C4' }
+        fgColor: { argb: 'FFE0E0E0' }
       };
-      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
       cell.border = {
         top: { style: 'thin' },
         left: { style: 'thin' },
@@ -652,253 +777,24 @@ router.get('/export/overall', async (req, res) => {
       cell.alignment = { horizontal: 'center' };
     });
 
-    let totalAdvanceTaken = 0;
-    let totalRepaid = 0;
-    let totalBalance = 0;
+    // Data rows
+    let sNo = 1;
+    let totalAdv = 0, totalDep = 0, totalDues = 0;
 
-    workers.forEach((worker, index) => {
+    Array.from(workerSummary.values()).forEach((summary) => {
+      const duesLeft = summary.totalAdvance - summary.totalDeposit;
+      
       const row = worksheet.addRow([
-        index + 1,
-        worker.workerId,
-        worker.name,
-        worker.isActive ? 'Active' : 'Inactive',
-        worker.totalAdvanceTaken || 0,
-        worker.totalAdvanceRepaid || 0,
-        worker.advanceBalance || 0
+        sNo,
+        summary.name,
+        summary.totalAdvance,
+        summary.totalDeposit,
+        duesLeft
       ]);
 
-      totalAdvanceTaken += worker.totalAdvanceTaken || 0;
-      totalRepaid += worker.totalAdvanceRepaid || 0;
-      totalBalance += worker.advanceBalance || 0;
-
-      row.eachCell((cell, colNumber) => {
-        cell.border = {
-          top: { style: 'thin' },
-          left: { style: 'thin' },
-          bottom: { style: 'thin' },
-          right: { style: 'thin' }
-        };
-
-        // Color the status column
-        if (colNumber === 4) {
-          cell.fill = {
-            type: 'pattern',
-            pattern: 'solid',
-            fgColor: { argb: worker.isActive ? 'FFC8E6C9' : 'FFFFCDD2' }
-          };
-        }
-        
-        // Color advance taken (red) and repaid (green)
-        if (colNumber === 5 && cell.value > 0) {
-          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFCCCC' } };
-        }
-        if (colNumber === 6 && cell.value > 0) {
-          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFC8E6C9' } };
-        }
-        
-        // Color balance yellow if > 0
-        if (colNumber === 7 && cell.value > 0) {
-          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFC000' } };
-          cell.font = { bold: true };
-        }
-      });
-    });
-
-    // Total row
-    worksheet.addRow([]);
-    const totalRow = worksheet.addRow([
-      '', '', '', 'TOTAL:',
-      totalAdvanceTaken,
-      totalRepaid,
-      totalBalance
-    ]);
-    totalRow.font = { bold: true };
-    totalRow.eachCell((cell, colNumber) => {
-      if (colNumber >= 4) {
-        cell.fill = {
-          type: 'pattern',
-          pattern: 'solid',
-          fgColor: { argb: 'FFE0E0E0' }
-        };
-        cell.border = {
-          top: { style: 'thin' },
-          left: { style: 'thin' },
-          bottom: { style: 'thin' },
-          right: { style: 'thin' }
-        };
-      }
-    });
-
-    // Column widths
-    worksheet.columns = [
-      { width: 8 },
-      { width: 15 },
-      { width: 25 },
-      { width: 12 },
-      { width: 20 },
-      { width: 20 },
-      { width: 18 }
-    ];
-
-    const buffer = await workbook.xlsx.writeBuffer();
-    const base64 = Buffer.from(buffer).toString('base64');
-    const filename = `labour_dues_overall_${dateStr.replace(/\//g, '-')}.xlsx`;
-
-    res.json({ base64, filename });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Export dues to Excel with colored cells (legacy)
-router.get('/export/dues', async (req, res) => {
-  try {
-    const { startDate, endDate } = req.query;
-    
-    const filter = {};
-    if (startDate || endDate) {
-      filter.date = {};
-      if (startDate) filter.date.$gte = new Date(startDate);
-      if (endDate) {
-        const end = new Date(endDate);
-        end.setHours(23, 59, 59, 999);
-        filter.date.$lte = end;
-      }
-    }
-
-    const advances = await Advance.find(filter)
-      .populate('worker', 'name workerId advanceBalance')
-      .sort({ date: -1 });
-
-    // Get all workers with advances
-    const workers = await Worker.find({ isActive: true })
-      .select('name workerId advanceBalance totalAdvanceTaken totalAdvanceRepaid')
-      .sort({ name: 1 });
-
-    const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'Worker Management System';
-    workbook.created = new Date();
-
-    const worksheet = workbook.addWorksheet('Labour Dues Chart');
-
-    // Format dates for title
-    const startDateStr = startDate ? new Date(startDate).toLocaleDateString('en-IN') : 'Beginning';
-    const endDateStr = endDate ? new Date(endDate).toLocaleDateString('en-IN') : 'Present';
-
-    // Title
-    worksheet.mergeCells('A1:G1');
-    worksheet.getCell('A1').value = `Labour Dues Chart (${startDateStr} to ${endDateStr})`;
-    worksheet.getCell('A1').font = { bold: true, size: 16 };
-    worksheet.getCell('A1').alignment = { horizontal: 'center' };
-
-    worksheet.addRow([]);
-
-    // Headers
-    const headerRow = worksheet.addRow([
-      'S.No',
-      'Worker ID',
-      'Worker Name',
-      'Date',
-      'Type',
-      'Amount',
-      'Balance After'
-    ]);
-
-    headerRow.font = { bold: true };
-    headerRow.eachCell((cell) => {
-      cell.fill = {
-        type: 'pattern',
-        pattern: 'solid',
-        fgColor: { argb: 'FFE0E0E0' }
-      };
-      cell.border = {
-        top: { style: 'thin' },
-        left: { style: 'thin' },
-        bottom: { style: 'thin' },
-        right: { style: 'thin' }
-      };
-    });
-
-    // Data rows with colored cells
-    advances.forEach((adv, index) => {
-      const row = worksheet.addRow([
-        index + 1,
-        adv.worker?.workerId || '',
-        adv.worker?.name || '',
-        new Date(adv.date).toLocaleDateString('en-IN'),
-        adv.type === 'advance' ? 'Advance' : (adv.type === 'deposit' ? 'Deposit' : 'Repayment'),
-        adv.amount,
-        adv.balanceAfter
-      ]);
-
-      row.eachCell((cell, colNumber) => {
-        cell.border = {
-          top: { style: 'thin' },
-          left: { style: 'thin' },
-          bottom: { style: 'thin' },
-          right: { style: 'thin' }
-        };
-
-        // Color the row based on type
-        if (adv.type === 'advance') {
-          // Light red for advance
-          cell.fill = {
-            type: 'pattern',
-            pattern: 'solid',
-            fgColor: { argb: 'FFFFCDD2' } // Light red
-          };
-        } else {
-          // Light green for deposit/repayment
-          cell.fill = {
-            type: 'pattern',
-            pattern: 'solid',
-            fgColor: { argb: 'FFC8E6C9' } // Light green
-          };
-        }
-      });
-    });
-
-    // Summary section
-    worksheet.addRow([]);
-    worksheet.addRow([]);
-    
-    const summaryTitle = worksheet.addRow(['Worker Summary']);
-    summaryTitle.font = { bold: true, size: 14 };
-
-    worksheet.addRow([]);
-
-    const summaryHeader = worksheet.addRow([
-      'S.No',
-      'Worker ID',
-      'Worker Name',
-      'Total Taken',
-      'Total Repaid',
-      'Current Balance'
-    ]);
-    summaryHeader.font = { bold: true };
-    summaryHeader.eachCell((cell) => {
-      cell.fill = {
-        type: 'pattern',
-        pattern: 'solid',
-        fgColor: { argb: 'FFE0E0E0' }
-      };
-      cell.border = {
-        top: { style: 'thin' },
-        left: { style: 'thin' },
-        bottom: { style: 'thin' },
-        right: { style: 'thin' }
-      };
-    });
-
-    workers.filter(w => w.advanceBalance > 0 || w.totalAdvanceTaken > 0).forEach((worker, index) => {
-      const row = worksheet.addRow([
-        index + 1,
-        worker.workerId,
-        worker.name,
-        worker.totalAdvanceTaken || 0,
-        worker.totalAdvanceRepaid || 0,
-        worker.advanceBalance
-      ]);
+      totalAdv += summary.totalAdvance;
+      totalDep += summary.totalDeposit;
+      totalDues += duesLeft;
 
       row.eachCell((cell) => {
         cell.border = {
@@ -907,15 +803,34 @@ router.get('/export/dues', async (req, res) => {
           bottom: { style: 'thin' },
           right: { style: 'thin' }
         };
+        cell.alignment = { horizontal: 'center' };
       });
+
+      sNo++;
+    });
+
+    // Totals row
+    const totalsRow = worksheet.addRow(['', 'TOTAL', totalAdv, totalDep, totalDues]);
+    totalsRow.font = { bold: true };
+    totalsRow.eachCell((cell) => {
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFFFD700' }
+      };
+      cell.border = {
+        top: { style: 'thin' },
+        left: { style: 'thin' },
+        bottom: { style: 'thin' },
+        right: { style: 'thin' }
+      };
+      cell.alignment = { horizontal: 'center' };
     });
 
     // Column widths
     worksheet.columns = [
       { width: 8 },
-      { width: 15 },
       { width: 25 },
-      { width: 15 },
       { width: 15 },
       { width: 15 },
       { width: 15 }
@@ -923,11 +838,12 @@ router.get('/export/dues', async (req, res) => {
 
     const buffer = await workbook.xlsx.writeBuffer();
     const base64 = Buffer.from(buffer).toString('base64');
-    const filename = `labour_dues_chart_${startDateStr.replace(/\//g, '-')}_to_${endDateStr.replace(/\//g, '-')}.xlsx`;
+    const filename = `advance_summary_${startStr.replace(/\//g, '-')}_to_${endStr.replace(/\//g, '-')}.xlsx`;
 
     res.json({ base64, filename });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('Export overall error:', error);
+    res.status(500).json({ error: 'Failed to export overall summary', details: error.message });
   }
 });
 
