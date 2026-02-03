@@ -31,9 +31,18 @@ router.get('/', async (req, res) => {
       }
     }
 
-    const advances = await Advance.find(filter)
+    // Support pagination: limit & skip
+    const limit = req.query.limit ? parseInt(req.query.limit, 10) : null;
+    const skip = req.query.skip ? parseInt(req.query.skip, 10) : null;
+
+    let q = Advance.find(filter)
       .populate('worker', 'name workerId advanceBalance')
       .sort({ date: -1 });
+
+    if (skip) q = q.skip(skip);
+    if (limit) q = q.limit(limit);
+
+    const advances = await q.exec();
 
     res.json(advances);
   } catch (error) {
