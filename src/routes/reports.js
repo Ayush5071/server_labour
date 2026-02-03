@@ -4,6 +4,7 @@ import DailyEntry from '../models/DailyEntry.js';
 import Worker from '../models/Worker.js';
 import Advance from '../models/Advance.js';
 import SalaryHistory from '../models/SalaryHistory.js';
+import Settings from '../models/Settings.js';
 
 const router = express.Router();
 
