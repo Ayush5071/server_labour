@@ -10,6 +10,10 @@ const settingsSchema = new mongoose.Schema({
   vaultPassword: {
     type: String,
     default: null
+  },
+  companyName: {
+    type: String,
+    default: null
   }
 }, { timestamps: true });
 

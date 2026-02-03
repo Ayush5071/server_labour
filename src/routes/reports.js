@@ -136,13 +136,30 @@ router.get('/export/work-summary', async (req, res) => {
     const startDateStr = startDate ? new Date(startDate).toLocaleDateString('en-IN') : 'Beginning';
     const endDateStr = endDate ? new Date(endDate).toLocaleDateString('en-IN') : 'Present';
 
-    // Title
-    worksheet.mergeCells('A1:I1');
-    worksheet.getCell('A1').value = `Work Summary Report (${startDateStr} to ${endDateStr})`;
-    worksheet.getCell('A1').font = { bold: true, size: 16 };
-    worksheet.getCell('A1').alignment = { horizontal: 'center' };
+    // Optional company name at top
+    const settings = await Settings.findOne({ key: 'general' });
+    if (settings && settings.companyName) {
+      worksheet.mergeCells('A1:I1');
+      worksheet.getCell('A1').value = settings.companyName;
+      worksheet.getCell('A1').font = { bold: true, size: 18 };
+      worksheet.getCell('A1').alignment = { horizontal: 'center' };
 
-    worksheet.addRow([]);
+      // Title on next row
+      worksheet.mergeCells('A2:I2');
+      worksheet.getCell('A2').value = `Work Summary Report (${startDateStr} to ${endDateStr})`;
+      worksheet.getCell('A2').font = { bold: true, size: 16 };
+      worksheet.getCell('A2').alignment = { horizontal: 'center' };
+
+      worksheet.addRow([]);
+    } else {
+      // Title
+      worksheet.mergeCells('A1:I1');
+      worksheet.getCell('A1').value = `Work Summary Report (${startDateStr} to ${endDateStr})`;
+      worksheet.getCell('A1').font = { bold: true, size: 16 };
+      worksheet.getCell('A1').alignment = { horizontal: 'center' };
+
+      worksheet.addRow([]);
+    }
 
     // Headers
     const headerRow = worksheet.addRow([
@@ -329,13 +346,30 @@ router.post('/export/work-summary', async (req, res) => {
     const startDateStr = startDate ? new Date(startDate).toLocaleDateString('en-IN') : 'Beginning';
     const endDateStr = endDate ? new Date(endDate).toLocaleDateString('en-IN') : 'Present';
 
-    // Title
-    worksheet.mergeCells('A1:I1');
-    worksheet.getCell('A1').value = `Work Summary (${startDateStr} to ${endDateStr})`;
-    worksheet.getCell('A1').font = { bold: true, size: 16 };
-    worksheet.getCell('A1').alignment = { horizontal: 'center' };
+    // Optional company name at top
+    const settings = await Settings.findOne({ key: 'general' });
+    if (settings && settings.companyName) {
+      worksheet.mergeCells('A1:H1');
+      worksheet.getCell('A1').value = settings.companyName;
+      worksheet.getCell('A1').font = { bold: true, size: 18 };
+      worksheet.getCell('A1').alignment = { horizontal: 'center' };
 
-    worksheet.addRow([]);
+      // Title on next row
+      worksheet.mergeCells('A2:H2');
+      worksheet.getCell('A2').value = `Work Summary (${startDateStr} to ${endDateStr})`;
+      worksheet.getCell('A2').font = { bold: true, size: 16 };
+      worksheet.getCell('A2').alignment = { horizontal: 'center' };
+
+      worksheet.addRow([]);
+    } else {
+      // Title
+      worksheet.mergeCells('A1:H1');
+      worksheet.getCell('A1').value = `Work Summary (${startDateStr} to ${endDateStr})`;
+      worksheet.getCell('A1').font = { bold: true, size: 16 };
+      worksheet.getCell('A1').alignment = { horizontal: 'center' };
+
+      worksheet.addRow([]);
+    }
 
     const headerRow = worksheet.addRow(['S.No','Worker ID','Name','Per Hr Rate (₹)','Total Hours','Amount (₹)','Deposit (₹)','Final Amount (₹)']);
     headerRow.font = { bold: true };

@@ -5,6 +5,32 @@ import Settings from '../models/Settings.js';
 const router = express.Router();
 const MASTER_PASSKEY = 'cipher15000';
 
+// Get company name
+router.get('/company-name', async (req, res) => {
+  try {
+    const settings = await Settings.findOne({ key: 'general' });
+    res.json({ companyName: settings?.companyName || null });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Set company name
+router.post('/company-name', async (req, res) => {
+  try {
+    const { companyName } = req.body;
+    let settings = await Settings.findOne({ key: 'general' });
+    if (!settings) {
+      settings = new Settings({ key: 'general' });
+    }
+    settings.companyName = companyName;
+    await settings.save();
+    res.json({ success: true, companyName: settings.companyName });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Check if vault password is set
 router.get('/status', async (req, res) => {
   try {
