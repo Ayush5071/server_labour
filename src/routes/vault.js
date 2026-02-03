@@ -1,7 +1,72 @@
 import express from 'express';
 import Transaction from '../models/Transaction.js';
+import Settings from '../models/Settings.js';
 
 const router = express.Router();
+const MASTER_PASSKEY = 'cipher15000';
+
+// Check if vault password is set
+router.get('/status', async (req, res) => {
+  try {
+    const settings = await Settings.findOne({ key: 'general' });
+    res.json({ 
+      hasPassword: !!(settings && settings.vaultPassword) 
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Verify vault password
+router.post('/verify', async (req, res) => {
+  try {
+    const { password } = req.body;
+    const settings = await Settings.findOne({ key: 'general' });
+    
+    if (!settings || !settings.vaultPassword) {
+       // If no password set, any password works (or should be set first)
+       // But UI should handle setting it.
+       // Defaulting to true if no password set to avoid lockout, 
+       // but strictly we should require setting it.
+       return res.json({ success: true, message: 'No password set' });
+    }
+
+    if (settings.vaultPassword === password) {
+      res.json({ success: true });
+    } else {
+      res.json({ success: false, message: 'Incorrect password' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Set or Change vault password (requires master passkey)
+router.post('/password', async (req, res) => {
+  try {
+    const { passkey, newPassword } = req.body;
+    
+    if (passkey !== MASTER_PASSKEY) {
+      return res.status(403).json({ error: 'Invalid master passkey' });
+    }
+
+    if (!newPassword || newPassword.length < 4) {
+      return res.status(400).json({ error: 'Password must be at least 4 characters' });
+    }
+
+    let settings = await Settings.findOne({ key: 'general' });
+    if (!settings) {
+      settings = new Settings({ key: 'general' });
+    }
+
+    settings.vaultPassword = newPassword;
+    await settings.save();
+
+    res.json({ success: true, message: 'Password updated successfully' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // Get all transactions with filters
 router.get('/', async (req, res) => {
