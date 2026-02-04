@@ -10,6 +10,7 @@ import vaultRoutes from './routes/vault.js';
 import bonusRoutes from './routes/bonus.js';
 import holidayRoutes from './routes/holidays.js';
 import settingsRoutes from './routes/settings.js';
+import statsRoutes from './routes/stats.js';
 
 dotenv.config();
 
@@ -35,6 +36,7 @@ mongoose.connect(MONGODB_URI)
     app.use('/api/bonus', bonusRoutes);
     app.use('/api/holidays', holidayRoutes);
     app.use('/api/settings', settingsRoutes);
+    app.use('/api/stats', statsRoutes);
 
     // Health check
     app.get('/api/health', (req, res) => {
