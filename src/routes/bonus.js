@@ -5,6 +5,7 @@ import Worker from '../models/Worker.js';
 import DailyEntry from '../models/DailyEntry.js';
 import Advance from '../models/Advance.js';
 import BonusHistory from '../models/BonusHistory.js';
+import Settings from '../models/Settings.js';
 
 const router = express.Router();
 
@@ -757,19 +758,42 @@ router.get('/export/excel', async (req, res) => {
 
     const worksheet = workbook.addWorksheet('Bonus Payment');
 
-    // Title
-    worksheet.mergeCells('A1:L1');
-    worksheet.getCell('A1').value = `Bonus Payment (${months[sM - 1]} ${sY} - ${months[eM - 1]} ${eY})`;
-    worksheet.getCell('A1').font = { bold: true, size: 16 };
-    worksheet.getCell('A1').alignment = { horizontal: 'center' };
+    // Optional company name at top
+    const settings = await Settings.findOne({ key: 'general' });
+    if (settings && settings.companyName) {
+      worksheet.mergeCells('A1:L1');
+      worksheet.getCell('A1').value = settings.companyName;
+      worksheet.getCell('A1').font = { bold: true, size: 18 };
+      worksheet.getCell('A1').alignment = { horizontal: 'center' };
 
-    // Formula explanation
-    worksheet.mergeCells('A2:L2');
-    worksheet.getCell('A2').value = 'Formula: Base Bonus = 30 days × 8 hours × Hourly Rate';
-    worksheet.getCell('A2').font = { italic: true, size: 10 };
-    worksheet.getCell('A2').alignment = { horizontal: 'center' };
+      // Title
+      worksheet.mergeCells('A2:L2');
+      worksheet.getCell('A2').value = `Bonus Payment (${months[sM - 1]} ${sY} - ${months[eM - 1]} ${eY})`;
+      worksheet.getCell('A2').font = { bold: true, size: 16 };
+      worksheet.getCell('A2').alignment = { horizontal: 'center' };
 
-    worksheet.addRow([]);
+      // Formula explanation
+      worksheet.mergeCells('A3:L3');
+      worksheet.getCell('A3').value = 'Formula: Base Bonus = 30 days × 8 hours × Hourly Rate';
+      worksheet.getCell('A3').font = { italic: true, size: 10 };
+      worksheet.getCell('A3').alignment = { horizontal: 'center' };
+
+      worksheet.addRow([]);
+    } else {
+      // Title
+      worksheet.mergeCells('A1:L1');
+      worksheet.getCell('A1').value = `Bonus Payment (${months[sM - 1]} ${sY} - ${months[eM - 1]} ${eY})`;
+      worksheet.getCell('A1').font = { bold: true, size: 16 };
+      worksheet.getCell('A1').alignment = { horizontal: 'center' };
+
+      // Formula explanation
+      worksheet.mergeCells('A2:L2');
+      worksheet.getCell('A2').value = 'Formula: Base Bonus = 30 days × 8 hours × Hourly Rate';
+      worksheet.getCell('A2').font = { italic: true, size: 10 };
+      worksheet.getCell('A2').alignment = { horizontal: 'center' };
+
+      worksheet.addRow([]);
+    }
     
     // Headers (removed Status column)
     const headerRow = worksheet.addRow([
@@ -886,18 +910,40 @@ router.post('/export/excel', async (req, res) => {
 
     const worksheet = workbook.addWorksheet('Bonus Payment');
 
-    // Title
-    worksheet.mergeCells('A1:L1');
-    worksheet.getCell('A1').value = `Bonus Payment (Exported)`;
-    worksheet.getCell('A1').font = { bold: true, size: 16 };
-    worksheet.getCell('A1').alignment = { horizontal: 'center' };
+    // Optional company name at top
+    const settings = await Settings.findOne({ key: 'general' });
+    if (settings && settings.companyName) {
+      worksheet.mergeCells('A1:L1');
+      worksheet.getCell('A1').value = settings.companyName;
+      worksheet.getCell('A1').font = { bold: true, size: 18 };
+      worksheet.getCell('A1').alignment = { horizontal: 'center' };
 
-    worksheet.mergeCells('A2:L2');
-    worksheet.getCell('A2').value = 'Formula: Base Bonus = 30 days × 8 hours × Hourly Rate';
-    worksheet.getCell('A2').font = { italic: true, size: 10 };
-    worksheet.getCell('A2').alignment = { horizontal: 'center' };
+      // Title
+      worksheet.mergeCells('A2:L2');
+      worksheet.getCell('A2').value = `Bonus Payment (Exported)`;
+      worksheet.getCell('A2').font = { bold: true, size: 16 };
+      worksheet.getCell('A2').alignment = { horizontal: 'center' };
 
-    worksheet.addRow([]);
+      worksheet.mergeCells('A3:L3');
+      worksheet.getCell('A3').value = 'Formula: Base Bonus = 30 days × 8 hours × Hourly Rate';
+      worksheet.getCell('A3').font = { italic: true, size: 10 };
+      worksheet.getCell('A3').alignment = { horizontal: 'center' };
+
+      worksheet.addRow([]);
+    } else {
+      // Title
+      worksheet.mergeCells('A1:L1');
+      worksheet.getCell('A1').value = `Bonus Payment (Exported)`;
+      worksheet.getCell('A1').font = { bold: true, size: 16 };
+      worksheet.getCell('A1').alignment = { horizontal: 'center' };
+
+      worksheet.mergeCells('A2:L2');
+      worksheet.getCell('A2').value = 'Formula: Base Bonus = 30 days × 8 hours × Hourly Rate';
+      worksheet.getCell('A2').font = { italic: true, size: 10 };
+      worksheet.getCell('A2').alignment = { horizontal: 'center' };
+
+      worksheet.addRow([]);
+    }
 
     // Headers (no status column)
     const headerRow = worksheet.addRow([
@@ -1208,18 +1254,40 @@ router.get('/export/history/:historyId', async (req, res) => {
     const endDateStr = history.periodEnd.toLocaleDateString('en-IN');
     const savedDateStr = history.savedDate.toLocaleDateString('en-IN');
 
-    // Title
-    worksheet.mergeCells('A1:L1');
-    worksheet.getCell('A1').value = `Bonus Report (${startDateStr} to ${endDateStr})`;
-    worksheet.getCell('A1').font = { bold: true, size: 16 };
-    worksheet.getCell('A1').alignment = { horizontal: 'center' };
+    // Optional company name at top
+    const settings = await Settings.findOne({ key: 'general' });
+    if (settings && settings.companyName) {
+      worksheet.mergeCells('A1:L1');
+      worksheet.getCell('A1').value = settings.companyName;
+      worksheet.getCell('A1').font = { bold: true, size: 18 };
+      worksheet.getCell('A1').alignment = { horizontal: 'center' };
 
-    worksheet.mergeCells('A2:L2');
-    worksheet.getCell('A2').value = `Saved on: ${savedDateStr}`;
-    worksheet.getCell('A2').font = { italic: true, size: 10 };
-    worksheet.getCell('A2').alignment = { horizontal: 'center' };
+      // Title
+      worksheet.mergeCells('A2:L2');
+      worksheet.getCell('A2').value = `Bonus Report (${startDateStr} to ${endDateStr})`;
+      worksheet.getCell('A2').font = { bold: true, size: 16 };
+      worksheet.getCell('A2').alignment = { horizontal: 'center' };
 
-    worksheet.addRow([]);
+      worksheet.mergeCells('A3:L3');
+      worksheet.getCell('A3').value = `Saved on: ${savedDateStr}`;
+      worksheet.getCell('A3').font = { italic: true, size: 10 };
+      worksheet.getCell('A3').alignment = { horizontal: 'center' };
+
+      worksheet.addRow([]);
+    } else {
+      // Title
+      worksheet.mergeCells('A1:L1');
+      worksheet.getCell('A1').value = `Bonus Report (${startDateStr} to ${endDateStr})`;
+      worksheet.getCell('A1').font = { bold: true, size: 16 };
+      worksheet.getCell('A1').alignment = { horizontal: 'center' };
+
+      worksheet.mergeCells('A2:L2');
+      worksheet.getCell('A2').value = `Saved on: ${savedDateStr}`;
+      worksheet.getCell('A2').font = { italic: true, size: 10 };
+      worksheet.getCell('A2').alignment = { horizontal: 'center' };
+
+      worksheet.addRow([]);
+    }
 
     // Headers
     const headerRow = worksheet.addRow([

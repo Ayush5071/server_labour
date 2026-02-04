@@ -4,6 +4,7 @@ import Advance from '../models/Advance.js';
 import Worker from '../models/Worker.js';
 import Payment from '../models/Payment.js';
 import DailyEntry from '../models/DailyEntry.js';
+import Settings from '../models/Settings.js';
 
 const router = express.Router();
 
@@ -597,14 +598,35 @@ router.get('/export/active', async (req, res) => {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Labour Dues Chart');
  
-    // Title
-    const titleText = `Labour Dues Chart ${start.getFullYear()}-${end.getFullYear()} (${start.toLocaleDateString('en-IN')})`;
-    worksheet.mergeCells(1, 1, 1, 3 + (maxPairs * 2) + 1); // S.No, Name, Advance + (ADn/DPn pairs) + Balance
-    worksheet.getCell('A1').value = titleText;
-    worksheet.getCell('A1').font = { bold: true, size: 16 };
-    worksheet.getCell('A1').alignment = { horizontal: 'center' };
- 
-    worksheet.addRow([]);
+    const totalCols = 3 + (maxPairs * 2) + 1;
+
+    // Optional company name at top
+    const settings = await Settings.findOne({ key: 'general' });
+    if (settings && settings.companyName) {
+      // Company name
+      worksheet.mergeCells(1, 1, 1, totalCols);
+      worksheet.getCell('A1').value = settings.companyName;
+      worksheet.getCell('A1').font = { bold: true, size: 18 };
+      worksheet.getCell('A1').alignment = { horizontal: 'center' };
+
+      // Title
+      const titleText = `Labour Dues Chart ${start.getFullYear()}-${end.getFullYear()} (${start.toLocaleDateString('en-IN')})`;
+      worksheet.mergeCells(2, 1, 2, totalCols);
+      worksheet.getCell('A2').value = titleText;
+      worksheet.getCell('A2').font = { bold: true, size: 16 };
+      worksheet.getCell('A2').alignment = { horizontal: 'center' };
+   
+      worksheet.addRow([]);
+    } else {
+      // Title
+      const titleText = `Labour Dues Chart ${start.getFullYear()}-${end.getFullYear()} (${start.toLocaleDateString('en-IN')})`;
+      worksheet.mergeCells(1, 1, 1, totalCols);
+      worksheet.getCell('A1').value = titleText;
+      worksheet.getCell('A1').font = { bold: true, size: 16 };
+      worksheet.getCell('A1').alignment = { horizontal: 'center' };
+   
+      worksheet.addRow([]);
+    }
  
     // Build headers: S.No | Name | Advance | AD1 | DP1 | AD2 | DP2 ... | Balance
     const headers = ['S.No', 'Name', 'Advance'];
@@ -758,15 +780,33 @@ router.get('/export/overall', async (req, res) => {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Overall Summary');
 
-    // Title
     const startStr = startDate ? new Date(startDate).toLocaleDateString('en-IN') : 'Beginning';
     const endStr = endDate ? new Date(endDate).toLocaleDateString('en-IN') : 'Present';
-    worksheet.mergeCells('A1:E1');
-    worksheet.getCell('A1').value = `Advance Summary (${startStr} to ${endStr})`;
-    worksheet.getCell('A1').font = { bold: true, size: 16 };
-    worksheet.getCell('A1').alignment = { horizontal: 'center' };
 
-    worksheet.addRow([]);
+    // Optional company name at top
+    const settings = await Settings.findOne({ key: 'general' });
+    if (settings && settings.companyName) {
+      worksheet.mergeCells('A1:E1');
+      worksheet.getCell('A1').value = settings.companyName;
+      worksheet.getCell('A1').font = { bold: true, size: 18 };
+      worksheet.getCell('A1').alignment = { horizontal: 'center' };
+
+      // Title
+      worksheet.mergeCells('A2:E2');
+      worksheet.getCell('A2').value = `Advance Summary (${startStr} to ${endStr})`;
+      worksheet.getCell('A2').font = { bold: true, size: 16 };
+      worksheet.getCell('A2').alignment = { horizontal: 'center' };
+
+      worksheet.addRow([]);
+    } else {
+      // Title
+      worksheet.mergeCells('A1:E1');
+      worksheet.getCell('A1').value = `Advance Summary (${startStr} to ${endStr})`;
+      worksheet.getCell('A1').font = { bold: true, size: 16 };
+      worksheet.getCell('A1').alignment = { horizontal: 'center' };
+
+      worksheet.addRow([]);
+    }
 
     // Headers: S.No | Name | Advance | Deposit | Dues Left
     const headerRow = worksheet.addRow(['S.No', 'Name', 'Advance', 'Deposit', 'Dues Left']);
