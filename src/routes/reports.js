@@ -52,12 +52,24 @@ router.get('/all-workers-summary', async (req, res) => {
           entries: []
         };
       }
-      workerMap[workerId].totalHoursWorked += entry.hoursWorked || 0;
+      let hours = entry.hoursWorked || 0;
+      let pay = entry.totalPay || 0;
+
+      // Treat holidays as full working days (usually 8 hours) for report calculations
+      if (entry.status === 'holiday') {
+        hours = entry.worker.dailyWorkingHours || 8;
+        // If pay is 0 (likely as it was saved as 0 hours), calculate based on current rate
+        if (pay === 0) {
+          pay = hours * (entry.worker.hourlyRate || 0);
+        }
+      }
+
+      workerMap[workerId].totalHoursWorked += hours;
       workerMap[workerId].totalRegularHours += entry.regularHours || 0;
       workerMap[workerId].totalOvertimeHours += entry.overtimeHours || 0;
       workerMap[workerId].totalRegularPay += entry.regularPay || 0;
       workerMap[workerId].totalOvertimePay += entry.overtimePay || 0;
-      workerMap[workerId].totalPay += entry.totalPay || 0;
+      workerMap[workerId].totalPay += pay;
       
       if (entry.status === 'present' || entry.status === 'holiday') {
         workerMap[workerId].daysPresent++;
@@ -116,8 +128,19 @@ router.get('/export/work-summary', async (req, res) => {
           totalPay: 0
         };
       }
-      workerMap[workerId].totalHoursWorked += entry.hoursWorked || 0;
-      workerMap[workerId].totalPay += entry.totalPay || 0;
+      let hours = entry.hoursWorked || 0;
+      let pay = entry.totalPay || 0;
+
+      // Treat holidays as full working days
+      if (entry.status === 'holiday') {
+        hours = entry.worker.dailyWorkingHours || 8;
+        if (pay === 0) {
+          pay = hours * (entry.worker.hourlyRate || 0);
+        }
+      }
+
+      workerMap[workerId].totalHoursWorked += hours;
+      workerMap[workerId].totalPay += pay;
     });
 
     // No deposit fetching - deposits handled separately
