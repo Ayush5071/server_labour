@@ -5,6 +5,14 @@ import Holiday from '../models/Holiday.js';
 
 const router = express.Router();
 
+// Helper function to parse date string consistently in local timezone
+const parseLocalDate = (dateString) => {
+  const [year, month, day] = dateString.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  date.setHours(0, 0, 0, 0);
+  return date;
+};
+
 // Get entries with filters
 router.get('/', async (req, res) => {
   try {
@@ -16,18 +24,17 @@ router.get('/', async (req, res) => {
     }
 
     if (date) {
-      const dayStart = new Date(date);
-      dayStart.setHours(0, 0, 0, 0);
-      const dayEnd = new Date(date);
+      const dayStart = parseLocalDate(date);
+      const dayEnd = new Date(dayStart);
       dayEnd.setHours(23, 59, 59, 999);
       filter.date = { $gte: dayStart, $lte: dayEnd };
     } else if (startDate || endDate) {
       filter.date = {};
       if (startDate) {
-        filter.date.$gte = new Date(startDate);
+        filter.date.$gte = parseLocalDate(startDate);
       }
       if (endDate) {
-        const end = new Date(endDate);
+        const end = parseLocalDate(endDate);
         end.setHours(23, 59, 59, 999);
         filter.date.$lte = end;
       }
@@ -47,9 +54,8 @@ router.get('/', async (req, res) => {
 router.get('/daily/:date', async (req, res) => {
   try {
     const { date } = req.params;
-    const dayStart = new Date(date);
-    dayStart.setHours(0, 0, 0, 0);
-    const dayEnd = new Date(date);
+    const dayStart = parseLocalDate(date);
+    const dayEnd = new Date(dayStart);
     dayEnd.setHours(23, 59, 59, 999);
 
     // Check if it's a holiday
@@ -57,13 +63,22 @@ router.get('/daily/:date', async (req, res) => {
       date: { $gte: dayStart, $lte: dayEnd }
     });
 
+    console.log(`🌐 [SERVER] GET /daily/${date}`);
+    console.log(`🌐 [SERVER] Query Range: ${dayStart.toISOString()} to ${dayEnd.toISOString()}`);
+
     // Get all active workers
     const workers = await Worker.find({ isActive: true }).sort({ name: 1 });
 
     // Get existing entries for this date
+    // Sort by updatedAt asc so that most recent entry overwrites older ones in the map
     const entries = await DailyEntry.find({
       date: { $gte: dayStart, $lte: dayEnd }
-    }).populate('worker', 'name workerId hourlyRate dailyWorkingHours');
+    }).sort({ updatedAt: 1 }).populate('worker', 'name workerId hourlyRate dailyWorkingHours');
+
+    console.log(`🌐 [SERVER] Found ${entries.length} raw entries in range`);
+    entries.forEach(e => {
+        console.log(`   - Entry ${e._id}: Worker ${e.worker?.name} (${e.worker?._id}), Date: ${e.date.toISOString()}, Hours: ${e.hoursWorked}, UpdatedAt: ${e.updatedAt}`);
+    });
 
     // Map entries by worker ID
     const entryMap = {};
@@ -83,6 +98,13 @@ router.get('/daily/:date', async (req, res) => {
       entry: entryMap[worker._id.toString()] || null
     }));
 
+    console.log(`🌐 [SERVER] Returning ${result.length} workers for date ${date}`);
+    result.forEach(r => {
+      if (r.entry) {
+        console.log(`🌐 [SERVER] Worker ${r.worker.name}: hours = ${r.entry.hoursWorked}, status = ${r.entry.status}`);
+      }
+    });
+    
     res.json({
       date,
       isHoliday: !!holiday,
@@ -98,8 +120,15 @@ router.get('/daily/:date', async (req, res) => {
 router.post('/bulk', async (req, res) => {
   try {
     const { date, entries } = req.body;
-    const dayStart = new Date(date);
-    dayStart.setHours(0, 0, 0, 0);
+    
+    console.log('🌐 [SERVER] Bulk save request for date:', date);
+    console.log('🌐 [SERVER] Received entries:', JSON.stringify(entries, null, 2));
+    
+    // Use range for querying to match any entry on this day regardless of timezone time
+    const rangeStart = parseLocalDate(date);
+    const rangeEnd = new Date(rangeStart);
+    rangeEnd.setHours(23, 59, 59, 999);
+    console.log('🌐 [SERVER] Date range:', { rangeStart, rangeEnd });
 
     const results = [];
 
@@ -112,29 +141,64 @@ router.post('/bulk', async (req, res) => {
 
       // Calculate pay
       let totalPay = 0;
-      if (status === 'present' || status === 'holiday') {
-        const hourlyRate = worker.hourlyRate || (worker.dailyPay ? worker.dailyPay / worker.dailyWorkingHours : 0);
-        totalPay = hoursWorked * hourlyRate;
-      } else if (status === 'half-day') {
-        const hourlyRate = worker.hourlyRate || (worker.dailyPay ? worker.dailyPay / worker.dailyWorkingHours : 0);
-        totalPay = hourlyRate * (worker.dailyWorkingHours / 2);
+      const hourlyRate = worker.hourlyRate || (worker.dailyPay ? worker.dailyPay / (worker.dailyWorkingHours || 8) : 0);
+
+      if (['present', 'holiday', 'half-day'].includes(status)) {
+         totalPay = (hoursWorked || 0) * hourlyRate;
       }
 
-      // Upsert entry
-      const updatedEntry = await DailyEntry.findOneAndUpdate(
-        { worker: workerId, date: dayStart },
-        {
+      // Find existing entry in range to avoid duplicates AND CLEAN UP DUPLICATES
+      const existingEntries = await DailyEntry.find({
+        worker: workerId,
+        date: { $gte: rangeStart, $lte: rangeEnd }
+      }).sort({ updatedAt: -1 }); // Newest first
+
+      let dailyEntry;
+      if (existingEntries.length > 0) {
+        // Use the newest one
+        dailyEntry = existingEntries[0];
+      }
+
+      const hoursValue = typeof hoursWorked === 'number' ? hoursWorked : (parseFloat(hoursWorked) >= 0 ? parseFloat(hoursWorked) : 0);
+      console.log(`🌐 [SERVER] Worker ${workerId}: hoursWorked input = ${hoursWorked}, converted = ${hoursValue}`);
+
+      if (dailyEntry) {
+        console.log(`🌐 [SERVER] Updating existing entry ${dailyEntry._id} for worker ${workerId}`);
+        dailyEntry.status = status;
+        dailyEntry.hoursWorked = hoursValue;
+        dailyEntry.totalPay = totalPay;
+        // Normalize date to prevent future fuzzy matching issues
+        dailyEntry.date = rangeStart;
+        if (notes !== undefined) dailyEntry.notes = notes;
+        await dailyEntry.save();
+        console.log(`🌐 [SERVER] Saved entry ${dailyEntry._id}:`, { status: dailyEntry.status, hoursWorked: dailyEntry.hoursWorked });
+
+        // Post-save cleanup: Ensure NO other entries exist for this worker on this date
+        // This handles race conditions and "hidden" duplicates that might have been missed by initial sort
+        const cleanupResult = await DailyEntry.deleteMany({
+            worker: workerId,
+            date: { $gte: rangeStart, $lte: rangeEnd },
+            _id: { $ne: dailyEntry._id }
+        });
+        if (cleanupResult.deletedCount > 0) {
+            console.log(`🧹 [SERVER] Post-save Cleanup: Deleted ${cleanupResult.deletedCount} extra entries for worker ${workerId}`);
+        }
+
+      } else {
+        console.log(`🌐 [SERVER] Creating new entry for worker ${workerId}`);
+        dailyEntry = new DailyEntry({
           worker: workerId,
-          date: dayStart,
+          date: rangeStart, // Normalize to midnight
           status,
-          hoursWorked: hoursWorked || 0,
+          hoursWorked: hoursValue,
           totalPay,
           notes
-        },
-        { upsert: true, new: true }
-      );
+        });
+        await dailyEntry.save();
+        console.log(`🌐 [SERVER] Created entry ${dailyEntry._id}:`, { status: dailyEntry.status, hoursWorked: dailyEntry.hoursWorked });
+      }
 
-      results.push(updatedEntry);
+      results.push(dailyEntry);
     }
 
     // Update worker stats
@@ -154,6 +218,7 @@ router.post('/bulk', async (req, res) => {
       });
     }
 
+    console.log(`🌐 [SERVER] ✅ Bulk save completed. Saved ${results.length} entries`);
     res.json({ success: true, count: results.length });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -170,31 +235,43 @@ router.post('/', async (req, res) => {
       return res.status(404).json({ error: 'Worker not found' });
     }
 
-    const dayStart = new Date(date);
-    dayStart.setHours(0, 0, 0, 0);
+    const rangeStart = parseLocalDate(date);
+    const rangeEnd = new Date(rangeStart);
+    rangeEnd.setHours(23, 59, 59, 999);
 
     // Calculate pay
     let totalPay = 0;
-    if (status === 'present' || status === 'holiday') {
-      const hourlyRate = worker.hourlyRate || (worker.dailyPay ? worker.dailyPay / worker.dailyWorkingHours : 0);
-      totalPay = hoursWorked * hourlyRate;
-    } else if (status === 'half-day') {
-      const hourlyRate = worker.hourlyRate;
-      totalPay = hourlyRate * (worker.dailyWorkingHours / 2);
+    const hourlyRate = worker.hourlyRate || (worker.dailyPay ? worker.dailyPay / (worker.dailyWorkingHours || 8) : 0);
+
+    if (['present', 'holiday', 'half-day'].includes(status)) {
+       totalPay = (hoursWorked || 0) * hourlyRate;
     }
 
-    const entry = await DailyEntry.findOneAndUpdate(
-      { worker: workerId, date: dayStart },
-      {
+    // Find existing entry in range
+    let dailyEntry = await DailyEntry.findOne({
+      worker: workerId,
+      date: { $gte: rangeStart, $lte: rangeEnd }
+    });
+
+    const hoursValue = typeof hoursWorked === 'number' ? hoursWorked : (parseFloat(hoursWorked) >= 0 ? parseFloat(hoursWorked) : 0);
+
+    if (dailyEntry) {
+      dailyEntry.status = status || 'present';
+      dailyEntry.hoursWorked = hoursValue;
+      dailyEntry.totalPay = totalPay;
+      if (notes !== undefined) dailyEntry.notes = notes;
+      await dailyEntry.save();
+    } else {
+      dailyEntry = new DailyEntry({
         worker: workerId,
-        date: dayStart,
+        date: rangeStart,
         status: status || 'present',
-        hoursWorked: hoursWorked || 0,
+        hoursWorked: hoursValue,
         totalPay,
         notes
-      },
-      { upsert: true, new: true }
-    );
+      });
+      await dailyEntry.save();
+    }
 
     // Update worker stats
     const presentCount = await DailyEntry.countDocuments({
@@ -211,7 +288,7 @@ router.post('/', async (req, res) => {
       totalDaysAbsent: absentCount
     });
 
-    const populatedEntry = await DailyEntry.findById(entry._id)
+    const populatedEntry = await DailyEntry.findById(dailyEntry._id)
       .populate('worker', 'name workerId');
 
     res.status(201).json(populatedEntry);
@@ -224,15 +301,24 @@ router.post('/', async (req, res) => {
 router.post('/mark-holiday', async (req, res) => {
   try {
     const { date, holidayName } = req.body;
-    const dayStart = new Date(date);
-    dayStart.setHours(0, 0, 0, 0);
+    
+    // Use range for consistent querying
+    const rangeStart = parseLocalDate(date);
+    const rangeEnd = new Date(rangeStart);
+    rangeEnd.setHours(23, 59, 59, 999);
 
     // Create or update holiday
-    await Holiday.findOneAndUpdate(
-      { date: dayStart },
-      { date: dayStart, name: holidayName || 'Holiday' },
-      { upsert: true }
-    );
+    // Check if holiday exists in range
+    let holiday = await Holiday.findOne({
+      date: { $gte: rangeStart, $lte: rangeEnd }
+    });
+
+    if (holiday) {
+      holiday.name = holidayName || 'Holiday';
+      await holiday.save();
+    } else {
+      await Holiday.create({ date: rangeStart, name: holidayName || 'Holiday' });
+    }
 
     // Get all active workers
     const workers = await Worker.find({ isActive: true });
@@ -242,18 +328,27 @@ router.post('/mark-holiday', async (req, res) => {
       const hourlyRate = worker.hourlyRate || (worker.dailyPay ? worker.dailyPay / worker.dailyWorkingHours : 0);
       const totalPay = hourlyRate * worker.dailyWorkingHours;
 
-      await DailyEntry.findOneAndUpdate(
-        { worker: worker._id, date: dayStart },
-        {
+      let dailyEntry = await DailyEntry.findOne({
+        worker: worker._id,
+        date: { $gte: rangeStart, $lte: rangeEnd }
+      });
+
+      if (dailyEntry) {
+        dailyEntry.status = 'holiday';
+        dailyEntry.hoursWorked = worker.dailyWorkingHours;
+        dailyEntry.totalPay = totalPay;
+        dailyEntry.notes = holidayName || 'Holiday';
+        await dailyEntry.save();
+      } else {
+        await DailyEntry.create({
           worker: worker._id,
-          date: dayStart,
+          date: rangeStart,
           status: 'holiday',
           hoursWorked: worker.dailyWorkingHours,
           totalPay,
           notes: holidayName || 'Holiday'
-        },
-        { upsert: true }
-      );
+        });
+      }
     }
 
     res.json({ success: true, message: `Holiday marked for ${workers.length} workers` });

@@ -6,9 +6,9 @@ const router = express.Router();
 // Get all workers
 router.get('/', async (req, res) => {
   try {
-    const { active } = req.query;
-    const filter = active !== undefined ? { isActive: active === 'true' } : {};
-    const workers = await Worker.find(filter).sort({ name: 1 });
+    // Return all workers regardless of active status
+    const workers = await Worker.find({}).sort({ name: 1 });
+    
     // Normalize salary field for older records that may still have dailyPay stored
     const normalized = workers.map(w => {
       const obj = w.toObject ? w.toObject() : w;

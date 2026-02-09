@@ -8,6 +8,14 @@ import Settings from '../models/Settings.js';
 
 const router = express.Router();
 
+// Helper function to parse date string consistently in local timezone
+const parseLocalDate = (dateString) => {
+  const [year, month, day] = dateString.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  date.setHours(0, 0, 0, 0);
+  return date;
+};
+
 const months = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'
@@ -21,9 +29,9 @@ router.get('/all-workers-summary', async (req, res) => {
     const filter = {};
     if (startDate || endDate) {
       filter.date = {};
-      if (startDate) filter.date.$gte = new Date(startDate);
+      if (startDate) filter.date.$gte = parseLocalDate(startDate);
       if (endDate) {
-        const end = new Date(endDate);
+        const end = parseLocalDate(endDate);
         end.setHours(23, 59, 59, 999);
         filter.date.$lte = end;
       }
@@ -104,9 +112,9 @@ router.get('/export/work-summary', async (req, res) => {
     const filter = {};
     if (startDate || endDate) {
       filter.date = {};
-      if (startDate) filter.date.$gte = new Date(startDate);
+      if (startDate) filter.date.$gte = parseLocalDate(startDate);
       if (endDate) {
-        const end = new Date(endDate);
+        const end = parseLocalDate(endDate);
         end.setHours(23, 59, 59, 999);
         filter.date.$lte = end;
       }
@@ -224,12 +232,12 @@ router.get('/export/work-summary', async (req, res) => {
         index + 1,
         item.worker?.workerId || '',
         item.worker?.name || '',
-        Math.round((item.worker?.hourlyRate || 0) * 100) / 100,
-        Math.round((item.totalHoursWorked || 0) * 100) / 100,
-        Math.round((item.totalPay || 0) * 100) / 100,
-        Math.round((item.totalAdvanceTaken || 0) * 100) / 100,
-        Math.round((item.totalDeposit || 0) * 100) / 100,
-        Math.round((item.finalAmount || 0) * 100) / 100
+        Math.round(item.worker?.hourlyRate || 0),
+        Math.round(item.totalHoursWorked || 0),
+        Math.round(item.totalPay || 0),
+        Math.round(item.totalAdvanceTaken || 0),
+        Math.round(item.totalDeposit || 0),
+        Math.round(item.finalAmount || 0)
       ]);
 
       totalAmount += item.totalPay || 0;
@@ -265,10 +273,10 @@ router.get('/export/work-summary', async (req, res) => {
     worksheet.addRow([]);
     const totalRow = worksheet.addRow([
       '', '', '', '', 'TOTAL:',
-      Math.round(totalAmount * 100) / 100,
-      Math.round(totalAdvances * 100) / 100,
-      Math.round(totalDeposits * 100) / 100,
-      Math.round(totalFinal * 100) / 100
+      Math.round(totalAmount),
+      Math.round(totalAdvances),
+      Math.round(totalDeposits),
+      Math.round(totalFinal)
     ]);
     totalRow.font = { bold: true };
 
@@ -327,9 +335,9 @@ router.post('/export/work-summary', async (req, res) => {
       const filter = {};
       if (startDate || endDate) {
         filter.date = {};
-        if (startDate) filter.date.$gte = new Date(startDate);
+        if (startDate) filter.date.$gte = parseLocalDate(startDate);
         if (endDate) {
-          const end = new Date(endDate);
+          const end = parseLocalDate(endDate);
           end.setHours(23, 59, 59, 999);
           filter.date.$lte = end;
         }
@@ -407,11 +415,11 @@ router.post('/export/work-summary', async (req, res) => {
         index + 1,
         rec.workerId || '',
         rec.workerName || (rec.worker && rec.worker.name) || '',
-        rec.hourlyRate || 0,
-        rec.totalHoursWorked || 0,
-        rec.totalPay || 0,
-        rec.deposit || 0,
-        rec.finalAmount || 0
+        Math.round(rec.hourlyRate || 0),
+        Math.round(rec.totalHoursWorked || 0),
+        Math.round(rec.totalPay || 0),
+        Math.round(rec.deposit || 0),
+        Math.round(rec.finalAmount || 0)
       ]);
       row.eachCell((cell) => {
         cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
@@ -426,7 +434,7 @@ router.post('/export/work-summary', async (req, res) => {
     const totalDeposit = report.reduce((sum, r) => sum + (r.deposit || 0), 0);
     const totalFinal = report.reduce((sum, r) => sum + (r.finalAmount || 0), 0);
 
-    const totalRow = worksheet.addRow(['', '', '', '', 'TOTAL:', totalAmount, totalDeposit, totalFinal]);
+    const totalRow = worksheet.addRow(['', '', '', '', 'TOTAL:', Math.round(totalAmount), Math.round(totalDeposit), Math.round(totalFinal)]);
     totalRow.font = { bold: true };
 
     worksheet.columns = [ { width: 8 }, { width: 15 }, { width: 25 }, { width: 15 }, { width: 15 }, { width: 15 }, { width: 15 }, { width: 18 } ];
@@ -573,8 +581,8 @@ router.get('/export/overtime/:year/:month', async (req, res) => {
         item.worker.bankDetails?.bankName || '',
         item.worker.bankDetails?.accountNumber || '',
         item.worker.bankDetails?.ifscCode || '',
-        Math.round((item.totalOvertimeHours || 0) * 100) / 100,
-        Math.round((item.totalOvertimePay || 0) * 100) / 100
+        Math.round(item.totalOvertimeHours || 0),
+        Math.round(item.totalOvertimePay || 0)
       ]);
       
       totalOvertimePay += item.totalOvertimePay || 0;
@@ -593,8 +601,8 @@ router.get('/export/overtime/:year/:month', async (req, res) => {
     worksheet.addRow([]);
     const totalRow = worksheet.addRow([
       '', '', '', '', '', 'TOTAL:',
-      Math.round(report.reduce((sum, item) => sum + (item.totalOvertimeHours || 0), 0) * 100) / 100,
-      Math.round(totalOvertimePay * 100) / 100
+      Math.round(report.reduce((sum, item) => sum + (item.totalOvertimeHours || 0), 0)),
+      Math.round(totalOvertimePay)
     ]);
     totalRow.font = { bold: true };
 
@@ -637,9 +645,9 @@ router.get('/worker-summary/:workerId', async (req, res) => {
     
     if (startDate || endDate) {
       filter.date = {};
-      if (startDate) filter.date.$gte = new Date(startDate);
+      if (startDate) filter.date.$gte = parseLocalDate(startDate);
       if (endDate) {
-        const end = new Date(endDate);
+        const end = parseLocalDate(endDate);
         end.setHours(23, 59, 59, 999);
         filter.date.$lte = end;
       }
@@ -762,9 +770,9 @@ router.get('/salary-history', async (req, res) => {
     const filter = {};
     if (startDate || endDate) {
       filter.savedDate = {};
-      if (startDate) filter.savedDate.$gte = new Date(startDate);
+      if (startDate) filter.savedDate.$gte = parseLocalDate(startDate);
       if (endDate) {
-        const end = new Date(endDate);
+        const end = parseLocalDate(endDate);
         end.setHours(23, 59, 59, 999);
         filter.savedDate.$lte = end;
       }
@@ -861,11 +869,11 @@ router.get('/export/salary-history/:historyId', async (req, res) => {
         index + 1,
         record.workerId || '',
         record.workerName || '',
-        record.hourlyRate || 0,
-        record.totalHoursWorked || 0,
-        record.totalPay || 0,
-        record.deposit || 0,
-        record.finalAmount || 0
+        Math.round(record.hourlyRate || 0),
+        Math.round(record.totalHoursWorked || 0),
+        Math.round(record.totalPay || 0),
+        Math.round(record.deposit || 0),
+        Math.round(record.finalAmount || 0)
       ]);
 
       row.eachCell((cell) => {
@@ -891,9 +899,9 @@ router.get('/export/salary-history/:historyId', async (req, res) => {
     worksheet.addRow([]);
     const totalRow = worksheet.addRow([
       '', '', '', '', 'TOTAL:',
-      history.totalAmount,
-      history.totalDeposit,
-      history.totalFinal
+      Math.round(history.totalAmount),
+      Math.round(history.totalDeposit),
+      Math.round(history.totalFinal)
     ]);
     totalRow.font = { bold: true };
 

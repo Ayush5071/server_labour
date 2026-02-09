@@ -143,10 +143,24 @@ router.get('/summary', async (req, res) => {
       totalExpense: 0,
       balance: 0,
       incomeByCategory: {},
-      expenseByCategory: {}
+      expenseByCategory: {},
+      personBalances: {}
     };
 
     transactions.forEach(t => {
+      // Calculate person balance if person is associated
+      if (t.person) {
+        if (!summary.personBalances[t.person]) {
+            summary.personBalances[t.person] = 0;
+        }
+        
+        if (t.type === 'income') {
+            summary.personBalances[t.person] += t.amount;
+        } else {
+            summary.personBalances[t.person] -= t.amount;
+        }
+      }
+
       if (t.type === 'income') {
         summary.totalIncome += t.amount;
         summary.incomeByCategory[t.category || 'Other'] = 
@@ -157,6 +171,19 @@ router.get('/summary', async (req, res) => {
           (summary.expenseByCategory[t.category || 'Other'] || 0) + t.amount;
       }
     });
+
+    // Ensure all known persons are included (even with 0 balance) by reading distinct person names from the DB
+    try {
+      const distinctPersons = await Transaction.distinct('person');
+      distinctPersons.filter(Boolean).forEach(p => {
+        if (!summary.personBalances[p]) {
+          summary.personBalances[p] = 0;
+        }
+      });
+    } catch (e) {
+      // Not critical, just log
+      console.warn('Failed to include distinct persons in vault summary', e.message || e);
+    }
 
     summary.balance = summary.totalIncome - summary.totalExpense;
 
@@ -169,7 +196,7 @@ router.get('/summary', async (req, res) => {
 // Create transaction
 router.post('/', async (req, res) => {
   try {
-    const { type, amount, category, note, date } = req.body;
+    const { type, amount, category, person, note, date } = req.body;
 
     if (!note) {
       return res.status(400).json({ error: 'Note is required' });
@@ -179,6 +206,7 @@ router.post('/', async (req, res) => {
       type,
       amount,
       category,
+      person: person || undefined,
       note,
       date: date ? new Date(date) : new Date()
     });
@@ -193,11 +221,11 @@ router.post('/', async (req, res) => {
 // Update transaction
 router.put('/:id', async (req, res) => {
   try {
-    const { type, amount, category, note, date } = req.body;
+    const { type, amount, category, person, note, date } = req.body;
 
     const transaction = await Transaction.findByIdAndUpdate(
       req.params.id,
-      { type, amount, category, note, date: date ? new Date(date) : undefined },
+      { type, amount, category, person: person || undefined, note, date: date ? new Date(date) : undefined },
       { new: true, runValidators: true }
     );
 

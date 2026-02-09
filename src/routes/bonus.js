@@ -830,24 +830,24 @@ router.get('/export/excel', async (req, res) => {
     let totalDeposit = 0;
     let totalAdvanceDue = 0;
     bonuses.forEach((bonus, index) => {
-      const amountToGive = bonus.amountToGiveEmployee || bonus.finalBonusAmount;
-      const currentAdvanceDue = bonus.worker?.advanceBalance || 0;
+      const amountToGive = Math.round(bonus.amountToGiveEmployee || bonus.finalBonusAmount);
+      const currentAdvanceDue = Math.round(bonus.worker?.advanceBalance || 0);
       const row = worksheet.addRow([
         index + 1,
         bonus.worker?.workerId || '',
         bonus.worker?.name || '',
-        bonus.hourlyRate || bonus.worker?.hourlyRate || 0,
-        bonus.baseBonusAmount,
+        Math.round(bonus.hourlyRate || bonus.worker?.hourlyRate || 0),
+        Math.round(bonus.baseBonusAmount),
         bonus.totalDaysAbsent,
-        bonus.totalPenalty,
+        Math.round(bonus.totalPenalty),
         currentAdvanceDue,
-        bonus.extraBonus || 0,
-        bonus.employeeDeposit || 0,
+        Math.round(bonus.extraBonus || 0),
+        Math.round(bonus.employeeDeposit || 0),
         amountToGive
       ]);
 
       totalFinal += amountToGive;
-      totalDeposit += bonus.employeeDeposit || 0;
+      totalDeposit += Math.round(bonus.employeeDeposit || 0);
       totalAdvanceDue += currentAdvanceDue;
 
       row.eachCell((cell) => {
@@ -973,12 +973,12 @@ router.post('/export/excel', async (req, res) => {
     const rows = Array.isArray(records) && records.length > 0 ? records : [];
 
     rows.forEach((rec, index) => {
-      const currentAdvanceDue = Number(rec.currentAdvanceBalance ?? rec.currentAdvanceDue) || 0;
-      const deposit = Number(rec.deposit ?? rec.employeeDeposit) || 0;
+      const currentAdvanceDue = Math.round(Number(rec.currentAdvanceBalance ?? rec.currentAdvanceDue) || 0);
+      const deposit = Math.round(Number(rec.deposit ?? rec.employeeDeposit) || 0);
       
-      const base = Number(rec.baseBonusAmount) || 0;
-      const penalty = Number(rec.totalPenalty) || 0;
-      const extra = Number(rec.extraBonus) || 0;
+      const base = Math.round(Number(rec.baseBonusAmount) || 0);
+      const penalty = Math.round(Number(rec.totalPenalty) || 0);
+      const extra = Math.round(Number(rec.extraBonus) || 0);
       
       // Recalculate Gross and Net to ensure accuracy even if UI sent stale totals
       const grossBonus = Math.max(0, base - penalty + extra);
@@ -988,7 +988,7 @@ router.post('/export/excel', async (req, res) => {
         index + 1,
         rec.workerId || '',
         rec.workerName || rec.workerName || '',
-        rec.hourlyRate || 0,
+        Math.round(rec.hourlyRate || 0),
         base,
         rec.totalDaysAbsent || 0,
         penalty,
@@ -1325,14 +1325,14 @@ router.get('/export/history/:historyId', async (req, res) => {
         index + 1,
         record.workerId || '',
         record.workerName || '',
-        record.hourlyRate || 0,
-        record.baseBonusAmount || 0,
+        Math.round(record.hourlyRate || 0),
+        Math.round(record.baseBonusAmount || 0),
         record.totalDaysAbsent || 0,
-        record.totalPenalty || 0,
-        record.advanceBalanceAtSave || 0,
-        record.extraBonus || 0,
-        record.deposit || 0,
-        record.amountToGiveEmployee || 0
+        Math.round(record.totalPenalty || 0),
+        Math.round(record.advanceBalanceAtSave || 0),
+        Math.round(record.extraBonus || 0),
+        Math.round(record.deposit || 0),
+        Math.round(record.amountToGiveEmployee || 0)
       ]);
 
       row.eachCell((cell) => {
@@ -1358,13 +1358,13 @@ router.get('/export/history/:historyId', async (req, res) => {
     worksheet.addRow([]);
     const totalRow = worksheet.addRow([
       '', '', '', '',
-      history.totalBaseBonusAmount,
+      Math.round(history.totalBaseBonusAmount),
       '',
-      history.totalPenalty,
-      history.totalAdvanceDue || 0,
-      history.totalExtraBonus,
-      history.totalDeposit,
-      history.totalFinalAmount
+      Math.round(history.totalPenalty),
+      Math.round(history.totalAdvanceDue || 0),
+      Math.round(history.totalExtraBonus),
+      Math.round(history.totalDeposit),
+      Math.round(history.totalFinalAmount)
     ]);
     totalRow.font = { bold: true };
 
