@@ -992,7 +992,7 @@ router.post('/export/excel', async (req, res) => {
 
       const row = worksheet.addRow([
         index + 1,
-        rec.workerId || '',
+        rec.workerDisplayId || rec.workerId || '',
         rec.workerName || rec.workerName || '',
         Math.round(rec.hourlyRate || 0),
         base,
@@ -1343,6 +1343,8 @@ router.get('/export/history/:historyId', async (req, res) => {
       'Current Advance Due',
       'Extra Bonus',
       'Deposit',
+      'Payout (Left)',
+      'New Advance',
       'Final Amount'
     ]);
 
@@ -1374,6 +1376,8 @@ router.get('/export/history/:historyId', async (req, res) => {
         Math.round(record.advanceBalanceAtSave || 0),
         Math.round(record.extraBonus || 0),
         Math.round(record.deposit || 0),
+        Math.round(record.payout || 0),
+        Math.round(record.newAdvance || 0),
         Math.round(record.amountToGiveEmployee || 0)
       ]);
 
@@ -1388,11 +1392,17 @@ router.get('/export/history/:historyId', async (req, res) => {
 
       // Color deposit cell in light green if has deposit
       if (record.deposit > 0) {
-        row.getCell(10).fill = {
-          type: 'pattern',
-          pattern: 'solid',
-          fgColor: { argb: 'FFC8E6C9' }
-        };
+        row.getCell(10).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF3E0' } };
+      }
+      
+      // Color payout cell in light red
+      if (record.payout > 0) {
+        row.getCell(11).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFE0E0' } };
+      }
+
+      // Color new advance cell in light green/teal
+      if (record.newAdvance > 0) {
+        row.getCell(12).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0F2F1' } };
       }
     });
 
@@ -1406,6 +1416,8 @@ router.get('/export/history/:historyId', async (req, res) => {
       Math.round(history.totalAdvanceDue || 0),
       Math.round(history.totalExtraBonus),
       Math.round(history.totalDeposit),
+      Math.round(history.totalPayout || 0),
+      Math.round(history.totalNewAdvance || 0),
       Math.round(history.totalFinalAmount)
     ]);
     totalRow.font = { bold: true };

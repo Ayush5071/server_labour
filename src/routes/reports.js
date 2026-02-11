@@ -322,7 +322,7 @@ router.post('/export/work-summary', async (req, res) => {
       // Use provided records (expected: workerId, workerName, hourlyRate, totalHoursWorked, totalPay, deposit, finalAmount)
       report = records.map(r => ({
         worker: r.worker || null,
-        workerId: r.workerId || (r.worker && r.worker.workerId) || '',
+        workerId: r.workerDisplayId || r.workerId || (r.worker && r.worker.workerId) || '',
         workerName: r.workerName || (r.worker && r.worker.name) || '',
         hourlyRate: r.hourlyRate || (r.worker && r.worker.hourlyRate) || 0,
         totalHoursWorked: r.totalHoursWorked || 0,
@@ -872,12 +872,12 @@ router.get('/export/salary-history/:historyId', async (req, res) => {
     const savedDateStr = history.savedDate.toLocaleDateString('en-IN');
 
     // Title
-    worksheet.mergeCells('A1:H1');
+    worksheet.mergeCells('A1:J1');
     worksheet.getCell('A1').value = `Salary Report (${startDateStr} to ${endDateStr})`;
     worksheet.getCell('A1').font = { bold: true, size: 16 };
     worksheet.getCell('A1').alignment = { horizontal: 'center' };
 
-    worksheet.mergeCells('A2:H2');
+    worksheet.mergeCells('A2:J2');
     worksheet.getCell('A2').value = `Saved on: ${savedDateStr}`;
     worksheet.getCell('A2').font = { italic: true, size: 10 };
     worksheet.getCell('A2').alignment = { horizontal: 'center' };
@@ -892,7 +892,9 @@ router.get('/export/salary-history/:historyId', async (req, res) => {
       'Per Hr Rate (₹)',
       'Total Hours',
       'Amount (₹)',
-      'Deposit (₹)',
+      'Payout (Left) (₹)',
+      'Deposit (Repay) (₹)',
+      'New Advance (₹)',
       'Final Amount (₹)'
     ]);
 
@@ -920,7 +922,9 @@ router.get('/export/salary-history/:historyId', async (req, res) => {
         Math.round(record.hourlyRate || 0),
         Math.round(record.totalHoursWorked || 0),
         Math.round(record.totalPay || 0),
+        Math.round(record.payout || 0),
         Math.round(record.deposit || 0),
+        Math.round(record.newAdvance || 0),
         Math.round(record.finalAmount || 0)
       ]);
 
@@ -933,12 +937,30 @@ router.get('/export/salary-history/:historyId', async (req, res) => {
         };
       });
 
-      // Color deposit cell in light green if has deposit
-      if (record.deposit > 0) {
+      // Color payout cell in light red
+      if (record.payout > 0) {
         row.getCell(7).fill = {
           type: 'pattern',
           pattern: 'solid',
-          fgColor: { argb: 'FFC8E6C9' }
+          fgColor: { argb: 'FFFFE0E0' }
+        };
+      }
+
+      // Color deposit cell in light orange (repay)
+      if (record.deposit > 0) {
+        row.getCell(8).fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FFFFF3E0' } // Light orange
+        };
+      }
+
+      // Color new advance in light teal/green
+      if (record.newAdvance > 0) {
+        row.getCell(9).fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FFE0F2F1' }
         };
       }
     });
@@ -948,7 +970,9 @@ router.get('/export/salary-history/:historyId', async (req, res) => {
     const totalRow = worksheet.addRow([
       '', '', '', '', 'TOTAL:',
       Math.round(history.totalAmount),
+      Math.round(history.totalPayout || 0),
       Math.round(history.totalDeposit),
+      Math.round(history.totalNewAdvance || 0),
       Math.round(history.totalFinal)
     ]);
     totalRow.font = { bold: true };
@@ -958,6 +982,8 @@ router.get('/export/salary-history/:historyId', async (req, res) => {
       { width: 8 },
       { width: 15 },
       { width: 25 },
+      { width: 15 },
+      { width: 15 },
       { width: 15 },
       { width: 15 },
       { width: 15 },
