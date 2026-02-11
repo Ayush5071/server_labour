@@ -957,6 +957,8 @@ router.post('/export/excel', async (req, res) => {
       'Current Advance Due',
       'Extra Bonus',
       'Deposit',
+      'Payout',
+      'New Advance',
       'Final Amount'
     ]);
 
@@ -965,6 +967,8 @@ router.post('/export/excel', async (req, res) => {
     // Data rows
     let totalFinal = 0;
     let totalDeposit = 0;
+    let totalPayout = 0;
+    let totalNewAdvance = 0;
     let totalAdvanceDue = 0;
     let totalBaseBonusAmount = 0;
     let totalPenalty = 0;
@@ -975,6 +979,8 @@ router.post('/export/excel', async (req, res) => {
     rows.forEach((rec, index) => {
       const currentAdvanceDue = Math.round(Number(rec.currentAdvanceBalance ?? rec.currentAdvanceDue) || 0);
       const deposit = Math.round(Number(rec.deposit ?? rec.employeeDeposit) || 0);
+      const payout = Math.round(Number(rec.payout) || 0);
+      const newAdvance = Math.round(Number(rec.newAdvance) || 0);
       
       const base = Math.round(Number(rec.baseBonusAmount) || 0);
       const penalty = Math.round(Number(rec.totalPenalty) || 0);
@@ -982,7 +988,7 @@ router.post('/export/excel', async (req, res) => {
       
       // Recalculate Gross and Net to ensure accuracy even if UI sent stale totals
       const grossBonus = Math.max(0, base - penalty + extra);
-      const finalAmount = Math.max(0, grossBonus - deposit);
+      const finalAmount = Math.max(0, grossBonus - deposit - payout + newAdvance);
 
       const row = worksheet.addRow([
         index + 1,
@@ -995,12 +1001,16 @@ router.post('/export/excel', async (req, res) => {
         currentAdvanceDue,
         extra,
         deposit,
+        payout,
+        newAdvance,
         finalAmount
       ]);
 
       // Update totals
       totalFinal += finalAmount;
       totalDeposit += deposit;
+      totalPayout += payout;
+      totalNewAdvance += newAdvance;
       totalAdvanceDue += currentAdvanceDue;
       totalBaseBonusAmount += base;
       totalPenalty += penalty;
@@ -1030,6 +1040,8 @@ router.post('/export/excel', async (req, res) => {
       totalAdvanceDue,
       totalExtraBonus,
       totalDeposit,
+      totalPayout,
+      totalNewAdvance,
       totalFinal
     ]);
     totalRow.font = { bold: true };
@@ -1043,6 +1055,7 @@ router.post('/export/excel', async (req, res) => {
       { width: 12 },
       { width: 10 },
       { width: 10 },
+      { width: 12 },
       { width: 12 },
       { width: 12 },
       { width: 12 },
@@ -1100,15 +1113,17 @@ router.post('/save-bonus-history', async (req, res) => {
       if (!worker) continue;
 
       const depositAmount = Number(record.deposit ?? record.employeeDeposit) || 0;
+      const payoutAmount = Number(record.payout) || 0;
+      const newAdvanceAmount = Number(record.newAdvance) || 0;
       const extraBonusAmount = Number(record.extraBonus ?? record.extraBonusAmount) || 0;
       const baseBonusAmount = Number(record.baseBonusAmount) || 0;
       const totalPenalty = Number(record.totalPenalty) || 0;
 
       // Recalculate derived amounts to ensure consistency with UI edits
       // Gross = Base - Penalty + Extra
-      // Net = Gross - Deposit
+      // Net = Gross - Deposit - Payout + New Advance
       const finalBonusAmount = Math.max(0, baseBonusAmount - totalPenalty + extraBonusAmount);
-      const amountToGiveEmployee = Math.max(0, finalBonusAmount - depositAmount);
+      const amountToGiveEmployee = Math.max(0, finalBonusAmount - depositAmount - payoutAmount + newAdvanceAmount);
       
       if (depositAmount > 0) {
         const newBalance = Math.max(0, worker.advanceBalance - depositAmount);
@@ -1129,6 +1144,27 @@ router.post('/save-bonus-history', async (req, res) => {
         });
       }
 
+      if (newAdvanceAmount > 0) {
+        // Fetch fresh worker state to ensure balance is correct
+        const freshWorker = await Worker.findById(worker._id);
+        const currentBalance = freshWorker.advanceBalance || 0;
+        const newBalance = currentBalance + newAdvanceAmount;
+
+        await Advance.create({
+          worker: worker._id,
+          type: 'advance',
+          amount: newAdvanceAmount,
+          date: new Date(),
+          notes: `${worker.name} taken advance ₹${newAdvanceAmount} with bonus`,
+          balanceAfter: newBalance
+        });
+
+        await Worker.findByIdAndUpdate(worker._id, {
+          advanceBalance: newBalance,
+          $inc: { totalAdvanceTaken: newAdvanceAmount }
+        });
+      }
+
       processedRecords.push({
         worker: worker._id,
         workerName: worker.name,
@@ -1140,8 +1176,10 @@ router.post('/save-bonus-history', async (req, res) => {
         totalPenalty,
         extraBonus: extraBonusAmount,
         deposit: depositAmount,
-        finalBonusAmount, // This is Gross (before deposit)
-        amountToGiveEmployee, // This is Net (after deposit)
+        payout: payoutAmount,
+        newAdvance: newAdvanceAmount,
+        finalBonusAmount, // This is Gross (before deposit and payout)
+        amountToGiveEmployee, // This is Net (after deposit and payout)
         advanceBalanceAtSave: worker.advanceBalance
       });
     }
@@ -1149,6 +1187,8 @@ router.post('/save-bonus-history', async (req, res) => {
     // Calculate totals
     const totalBaseBonusAmount = processedRecords.reduce((sum, r) => sum + r.baseBonusAmount, 0);
     const totalPenalty = processedRecords.reduce((sum, r) => sum + r.totalPenalty, 0);
+    const totalPayout = processedRecords.reduce((sum, r) => sum + r.payout, 0);
+    const totalNewAdvance = processedRecords.reduce((sum, r) => sum + r.newAdvance, 0);
     const totalExtraBonus = processedRecords.reduce((sum, r) => sum + r.extraBonus, 0);
     const totalDeposit = processedRecords.reduce((sum, r) => sum + r.deposit, 0);
     const totalFinalAmount = processedRecords.reduce((sum, r) => sum + r.amountToGiveEmployee, 0);
@@ -1166,6 +1206,8 @@ router.post('/save-bonus-history', async (req, res) => {
       totalAdvanceDue,
       totalExtraBonus,
       totalDeposit,
+      totalPayout,
+      totalNewAdvance,
       totalFinalAmount,
       notes,
       isSaved: true

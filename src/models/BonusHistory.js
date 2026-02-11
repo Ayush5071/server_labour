@@ -39,6 +39,14 @@ const bonusHistorySchema = new mongoose.Schema({
       type: Number,
       default: 0
     },
+    payout: { // Already paid deduction
+      type: Number,
+      default: 0
+    },
+    newAdvance: { // New advance given
+      type: Number,
+      default: 0
+    },
     finalBonusAmount: Number,
     amountToGiveEmployee: Number,
     advanceBalanceAtSave: Number
@@ -46,10 +54,12 @@ const bonusHistorySchema = new mongoose.Schema({
   // Summary totals
   totalBaseBonusAmount: Number,
   totalPenalty: Number,
-  totalAdvanceDue: Number, // new: sum of workers' advance balances at time of save
+  totalAdvanceDue: Number,
   totalAdvanceDeduction: Number,
   totalExtraBonus: Number,
   totalDeposit: Number,
+  totalPayout: Number,
+  totalNewAdvance: Number,
   totalFinalAmount: Number,
   // Metadata
   notes: String,

@@ -31,6 +31,14 @@ const salaryHistorySchema = new mongoose.Schema({
       type: Number,
       default: 0
     },
+    newAdvance: {
+      type: Number,
+      default: 0
+    },
+    payout: {
+      type: Number,
+      default: 0
+    },
     finalAmount: Number,
     advanceBalanceAtSave: Number
   }],
@@ -38,6 +46,8 @@ const salaryHistorySchema = new mongoose.Schema({
   totalHours: Number,
   totalAmount: Number,
   totalDeposit: Number,
+  totalNewAdvance: Number,
+  totalPayout: Number,
   totalFinal: Number,
   // Metadata
   notes: String,

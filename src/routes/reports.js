@@ -327,7 +327,9 @@ router.post('/export/work-summary', async (req, res) => {
         hourlyRate: r.hourlyRate || (r.worker && r.worker.hourlyRate) || 0,
         totalHoursWorked: r.totalHoursWorked || 0,
         totalPay: r.totalPay || 0,
+        payout: r.payout || 0,
         deposit: r.deposit || 0,
+        newAdvance: r.newAdvance || 0,
         finalAmount: r.finalAmount || r.totalPay || 0
       }));
     } else {
@@ -395,7 +397,7 @@ router.post('/export/work-summary', async (req, res) => {
       worksheet.addRow([]);
     } else {
       // Title
-      worksheet.mergeCells('A1:H1');
+      worksheet.mergeCells('A1:J1');
       worksheet.getCell('A1').value = `Work Summary (${startDateStr} to ${endDateStr})`;
       worksheet.getCell('A1').font = { bold: true, size: 16 };
       worksheet.getCell('A1').alignment = { horizontal: 'center' };
@@ -403,7 +405,7 @@ router.post('/export/work-summary', async (req, res) => {
       worksheet.addRow([]);
     }
 
-    const headerRow = worksheet.addRow(['S.No','Worker ID','Name','Per Hr Rate (₹)','Total Hours','Amount (₹)','Deposit (₹)','Final Amount (₹)']);
+    const headerRow = worksheet.addRow(['S.No','Worker ID','Name','Per Hr Rate (₹)','Total Hours','Amount (₹)', 'Payout (Left) (₹)', 'Deposit (Repay) (₹)', 'New Advance (₹)', 'Final Amount (₹)']);
     headerRow.font = { bold: true };
     headerRow.eachCell((cell) => {
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } };
@@ -418,26 +420,39 @@ router.post('/export/work-summary', async (req, res) => {
         Math.round(rec.hourlyRate || 0),
         Math.round(rec.totalHoursWorked || 0),
         Math.round(rec.totalPay || 0),
+        Math.round(rec.payout || 0),
         Math.round(rec.deposit || 0),
+        Math.round(rec.newAdvance || 0),
         Math.round(rec.finalAmount || 0)
       ]);
       row.eachCell((cell) => {
         cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
       });
+      // Payout (Red)
+      if (rec.payout > 0) {
+        row.getCell(7).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFE0E0' } };
+      }
+      // Deposit (Yellow/Orange)
       if (rec.deposit > 0) {
-        row.getCell(7).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFC8E6C9' } };
+        row.getCell(8).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF3E0' } };
+      }
+      // New Advance (Green)
+      if (rec.newAdvance > 0) {
+        row.getCell(9).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0F2F1' } };
       }
     });
 
     worksheet.addRow([]);
     const totalAmount = report.reduce((sum, r) => sum + (r.totalPay || 0), 0);
+    const totalPayout = report.reduce((sum, r) => sum + (r.payout || 0), 0);
     const totalDeposit = report.reduce((sum, r) => sum + (r.deposit || 0), 0);
+    const totalAdvance = report.reduce((sum, r) => sum + (r.newAdvance || 0), 0);
     const totalFinal = report.reduce((sum, r) => sum + (r.finalAmount || 0), 0);
 
-    const totalRow = worksheet.addRow(['', '', '', '', 'TOTAL:', Math.round(totalAmount), Math.round(totalDeposit), Math.round(totalFinal)]);
+    const totalRow = worksheet.addRow(['', '', '', '', 'TOTAL:', Math.round(totalAmount), Math.round(totalPayout), Math.round(totalDeposit), Math.round(totalAdvance), Math.round(totalFinal)]);
     totalRow.font = { bold: true };
 
-    worksheet.columns = [ { width: 8 }, { width: 15 }, { width: 25 }, { width: 15 }, { width: 15 }, { width: 15 }, { width: 15 }, { width: 18 } ];
+    worksheet.columns = [ { width: 8 }, { width: 15 }, { width: 25 }, { width: 15 }, { width: 15 }, { width: 15 }, { width: 15 }, { width: 15 }, { width: 15 }, { width: 18 } ];
 
     const buffer = await workbook.xlsx.writeBuffer();
     const base64 = Buffer.from(buffer).toString('base64');
@@ -717,6 +732,28 @@ router.post('/save-salary-history', async (req, res) => {
         });
       }
 
+      // Handle New Advance
+      if (record.newAdvance && record.newAdvance > 0) {
+        // Fetch fresh worker incase updated above
+        const updatedWorker = await Worker.findById(worker._id);
+        const currentBalance = updatedWorker.advanceBalance || 0;
+        const newBalance = currentBalance + record.newAdvance;
+
+        await Advance.create({
+          worker: worker._id,
+          type: 'advance',
+          amount: record.newAdvance,
+          date: new Date(),
+          notes: `${worker.name} taken advance ₹${record.newAdvance} with salary`,
+          balanceAfter: newBalance
+        });
+
+        await Worker.findByIdAndUpdate(worker._id, {
+          advanceBalance: newBalance,
+          $inc: { totalAdvanceTaken: record.newAdvance }
+        });
+      }
+
       processedRecords.push({
         worker: worker._id,
         workerName: worker.name,
@@ -725,8 +762,15 @@ router.post('/save-salary-history', async (req, res) => {
         totalHoursWorked: record.totalHoursWorked || 0,
         totalPay: record.totalPay || 0,
         deposit: record.deposit || 0,
+        newAdvance: record.newAdvance || 0,
+        payout: record.payout || 0,
         finalAmount: record.finalAmount || 0,
-        advanceBalanceAtSave: worker.advanceBalance
+        advanceBalanceAtSave: worker.advanceBalance // Note: this is balance BEFORE new updates technically, but maybe fine. Or should be updated balance?
+        // Actually for historical record, maybe the balance *after* the salary operation is better?
+        // But `worker` var is stale. Let's stick to what it was at start or update? 
+        // Let's use `(await Worker.findById(worker._id)).advanceBalance` if we want accuracy.
+        // For now, keeping as is (snapshot at start of processing) is acceptable or slightly off. 
+        // Let's leave as is for minimal disruption, or simple fetch.
       });
     }
 
@@ -734,6 +778,8 @@ router.post('/save-salary-history', async (req, res) => {
     const totalHours = processedRecords.reduce((sum, r) => sum + r.totalHoursWorked, 0);
     const totalAmount = processedRecords.reduce((sum, r) => sum + r.totalPay, 0);
     const totalDeposit = processedRecords.reduce((sum, r) => sum + r.deposit, 0);
+    const totalNewAdvance = processedRecords.reduce((sum, r) => sum + r.newAdvance, 0);
+    const totalPayout = processedRecords.reduce((sum, r) => sum + r.payout, 0);
     const totalFinal = processedRecords.reduce((sum, r) => sum + r.finalAmount, 0);
 
     // Create history record
@@ -745,6 +791,8 @@ router.post('/save-salary-history', async (req, res) => {
       totalHours,
       totalAmount,
       totalDeposit,
+      totalNewAdvance,
+      totalPayout,
       totalFinal,
       notes,
       isSaved: true

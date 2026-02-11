@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 const transactionSchema = new mongoose.Schema({
   type: {
     type: String,
-    enum: ['income', 'expense'],
+    enum: ['income', 'expense', 'transfer'],
     required: true
   },
   amount: {
@@ -15,6 +15,12 @@ const transactionSchema = new mongoose.Schema({
     trim: true
   },
   person: {
+    type: String,
+    enum: ['Biswajit -1', 'Biswajit-2', 'Rajkumar', 'Manoj'],
+    trim: true,
+    required: false
+  },
+  targetPerson: {
     type: String,
     enum: ['Biswajit -1', 'Biswajit-2', 'Rajkumar', 'Manoj'],
     trim: true,
