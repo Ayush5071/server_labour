@@ -264,4 +264,51 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+
+// Export to Excel (last 100 transactions)
+router.get('/export/excel', async (req, res) => {
+  try {
+    const transactions = await Transaction.find().sort({ date: -1 }).limit(100);
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'Worker Management System - Vault';
+    workbook.created = new Date();
+
+    const worksheet = workbook.addWorksheet('Vault Transactions');
+
+    worksheet.columns = [
+      { header: 'Date', key: 'date', width: 15 },
+      { header: 'Type', key: 'type', width: 10 },
+      { header: 'Category', key: 'category', width: 15 },
+      { header: 'Amount', key: 'amount', width: 12 },
+      { header: 'Person', key: 'person', width: 20 },
+      { header: 'Target Person', key: 'targetPerson', width: 20 },
+      { header: 'Note', key: 'note', width: 30 }
+    ];
+
+    // Style header row
+    worksheet.getRow(1).font = { bold: true };
+
+    transactions.forEach(txn => {
+      worksheet.addRow({
+        date: txn.date ? new Date(txn.date).toLocaleDateString() : '',
+        type: txn.type,
+        category: txn.category || '',
+        amount: txn.amount,
+        person: txn.person || '',
+        targetPerson: txn.targetPerson || '',
+        note: txn.note || ''
+      });
+    });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const base64 = Buffer.from(buffer).toString('base64');
+    const filename = `vault_transactions_last_100.xlsx`;
+
+    res.json({ base64, filename });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;
