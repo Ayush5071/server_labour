@@ -169,6 +169,39 @@ router.post('/repay', async (req, res) => {
   }
 });
 
+// Delete an advance transaction and reverse balance changes
+router.delete('/:id', async (req, res) => {
+  try {
+    const advance = await Advance.findById(req.params.id);
+    if (!advance) {
+      return res.status(404).json({ error: 'Advance transaction not found' });
+    }
+
+    const worker = await Worker.findById(advance.worker);
+    if (!worker) {
+      return res.status(404).json({ error: 'Worker not found' });
+    }
+
+    // Reverse the balance change
+    if (advance.type === 'advance') {
+      // Was an advance given: reduce balance and totalAdvanceTaken
+      worker.advanceBalance = Math.max(0, worker.advanceBalance - advance.amount);
+      worker.totalAdvanceTaken = Math.max(0, (worker.totalAdvanceTaken || 0) - advance.amount);
+    } else if (advance.type === 'repayment' || advance.type === 'deposit') {
+      // Was a repayment/deposit: increase balance back and reduce totalAdvanceRepaid
+      worker.advanceBalance = worker.advanceBalance + advance.amount;
+      worker.totalAdvanceRepaid = Math.max(0, (worker.totalAdvanceRepaid || 0) - advance.amount);
+    }
+
+    await worker.save();
+    await Advance.findByIdAndDelete(req.params.id);
+
+    res.json({ message: 'Advance transaction deleted and balance reversed' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Make salary payment
 router.post('/salary', async (req, res) => {
   try {
