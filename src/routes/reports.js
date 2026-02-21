@@ -8,6 +8,17 @@ import Settings from '../models/Settings.js';
 
 const router = express.Router();
 
+// Helper function to format dates consistently for Excel (dd/mm/yyyy)
+const formatExcelDate = (date) => {
+  if (!date) return '';
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return '';
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  return `${day}/${month}/${year}`;
+};
+
 // Helper function to parse date string consistently in local timezone
 const parseLocalDate = (dateString) => {
   const [year, month, day] = dateString.split('-').map(Number);
@@ -165,8 +176,8 @@ router.get('/export/work-summary', async (req, res) => {
 
     const worksheet = workbook.addWorksheet('Work Summary');
 
-    const startDateStr = startDate ? new Date(startDate).toLocaleDateString('en-IN') : 'Beginning';
-    const endDateStr = endDate ? new Date(endDate).toLocaleDateString('en-IN') : 'Present';
+    const startDateStr = startDate ? formatExcelDate(startDate) : 'Beginning';
+    const endDateStr = endDate ? formatExcelDate(endDate) : 'Present';
 
     // Optional company name at top
     const settings = await Settings.findOne({ key: 'general' });
@@ -377,8 +388,8 @@ router.post('/export/work-summary', async (req, res) => {
 
     const worksheet = workbook.addWorksheet('Work Summary');
 
-    const startDateStr = startDate ? new Date(startDate).toLocaleDateString('en-IN') : 'Beginning';
-    const endDateStr = endDate ? new Date(endDate).toLocaleDateString('en-IN') : 'Present';
+    const startDateStr = startDate ? formatExcelDate(startDate) : 'Beginning';
+    const endDateStr = endDate ? formatExcelDate(endDate) : 'Present';
 
     // Optional company name at top
     const settings = await Settings.findOne({ key: 'general' });
@@ -867,9 +878,9 @@ router.get('/export/salary-history/:historyId', async (req, res) => {
 
     const worksheet = workbook.addWorksheet('Salary Report');
 
-    const startDateStr = history.periodStart.toLocaleDateString('en-IN');
-    const endDateStr = history.periodEnd.toLocaleDateString('en-IN');
-    const savedDateStr = history.savedDate.toLocaleDateString('en-IN');
+    const startDateStr = formatExcelDate(history.periodStart);
+    const endDateStr = formatExcelDate(history.periodEnd);
+    const savedDateStr = formatExcelDate(history.savedDate);
 
     // Title
     worksheet.mergeCells('A1:J1');

@@ -9,6 +9,17 @@ import Settings from '../models/Settings.js';
 
 const router = express.Router();
 
+// Helper function to format dates consistently for Excel (dd/mm/yyyy)
+const formatExcelDate = (date) => {
+  if (!date) return '';
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return '';
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  return `${day}/${month}/${year}`;
+};
+
 const months = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'
@@ -1059,7 +1070,8 @@ router.post('/export/excel', async (req, res) => {
       { width: 12 },
       { width: 12 },
       { width: 12 },
-      { width: 14 }
+      { width: 14 },
+      { width: 16 }
     ];
 
     const buffer2 = await workbook.xlsx.writeBuffer();
@@ -1292,9 +1304,9 @@ router.get('/export/history/:historyId', async (req, res) => {
 
     const worksheet = workbook.addWorksheet('Bonus Report');
 
-    const startDateStr = history.periodStart.toLocaleDateString('en-IN');
-    const endDateStr = history.periodEnd.toLocaleDateString('en-IN');
-    const savedDateStr = history.savedDate.toLocaleDateString('en-IN');
+    const startDateStr = formatExcelDate(history.periodStart);
+    const endDateStr = formatExcelDate(history.periodEnd);
+    const savedDateStr = formatExcelDate(history.savedDate);
 
     // Optional company name at top
     const settings = await Settings.findOne({ key: 'general' });
@@ -1422,7 +1434,7 @@ router.get('/export/history/:historyId', async (req, res) => {
     ]);
     totalRow.font = { bold: true };
 
-    // Column widths
+    // Column widths (13 columns to match headers)
     worksheet.columns = [
       { width: 8 },
       { width: 12 },
@@ -1431,10 +1443,12 @@ router.get('/export/history/:historyId', async (req, res) => {
       { width: 12 },
       { width: 10 },
       { width: 10 },
+      { width: 14 },
       { width: 12 },
       { width: 12 },
-      { width: 12 },
-      { width: 14 }
+      { width: 14 },
+      { width: 14 },
+      { width: 16 }
     ];
 
     const buffer = await workbook.xlsx.writeBuffer();

@@ -6,6 +6,17 @@ import Settings from '../models/Settings.js';
 const router = express.Router();
 const MASTER_PASSKEY = 'cipher15000';
 
+// Helper function to format dates consistently for Excel (dd/mm/yyyy)
+const formatExcelDate = (date) => {
+  if (!date) return '';
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return '';
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  return `${day}/${month}/${year}`;
+};
+
 // Get company name
 router.get('/company-name', async (req, res) => {
   try {
@@ -277,7 +288,7 @@ router.get('/export/excel', async (req, res) => {
     const worksheet = workbook.addWorksheet('Vault Transactions');
 
     worksheet.columns = [
-      { header: 'Date', key: 'date', width: 15 },
+      { header: 'Date', key: 'date', width: 18 },
       { header: 'Type', key: 'type', width: 10 },
       { header: 'Category', key: 'category', width: 15 },
       { header: 'Amount', key: 'amount', width: 12 },
@@ -291,7 +302,7 @@ router.get('/export/excel', async (req, res) => {
 
     transactions.forEach(txn => {
       worksheet.addRow({
-        date: txn.date ? new Date(txn.date).toLocaleDateString() : '',
+        date: txn.date ? formatExcelDate(txn.date) : '',
         type: txn.type,
         category: txn.category || '',
         amount: txn.amount,
