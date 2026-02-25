@@ -53,7 +53,7 @@ router.get('/all-workers-summary', async (req, res) => {
 
     // Group by worker
     const workerMap = {};
-    
+
     entries.forEach(entry => {
       if (!entry.worker) return;
       const workerId = entry.worker._id.toString();
@@ -89,13 +89,13 @@ router.get('/all-workers-summary', async (req, res) => {
       workerMap[workerId].totalRegularPay += entry.regularPay || 0;
       workerMap[workerId].totalOvertimePay += entry.overtimePay || 0;
       workerMap[workerId].totalPay += pay;
-      
+
       if (entry.status === 'present' || entry.status === 'holiday') {
         workerMap[workerId].daysPresent++;
       } else if (entry.status === 'absent') {
         workerMap[workerId].daysAbsent++;
       }
-      
+
       workerMap[workerId].entries.push(entry);
     });
 
@@ -136,7 +136,7 @@ router.get('/export/work-summary', async (req, res) => {
 
     // Group by worker
     const workerMap = {};
-    
+
     entries.forEach(entry => {
       if (!entry.worker) return;
       const workerId = entry.worker._id.toString();
@@ -271,7 +271,7 @@ router.get('/export/work-summary', async (req, res) => {
         pattern: 'solid',
         fgColor: { argb: 'FFFFCCCC' }
       };
-      
+
       // Color deposit cell in light green
       row.getCell(8).fill = {
         type: 'pattern',
@@ -416,7 +416,7 @@ router.post('/export/work-summary', async (req, res) => {
       worksheet.addRow([]);
     }
 
-    const headerRow = worksheet.addRow(['S.No','Worker ID','Name','Per Hr Rate (₹)','Total Hours','Amount (₹)', 'Payout (Left) (₹)', 'Deposit (Repay) (₹)', 'New Advance (₹)', 'Final Amount (₹)']);
+    const headerRow = worksheet.addRow(['S.No', 'Worker ID', 'Name', 'Per Hr Rate (₹)', 'Total Hours', 'Amount (₹)', 'Payout (Left) (₹)', 'Deposit (Repay) (₹)', 'New Advance (₹)', 'Final Amount (₹)']);
     headerRow.font = { bold: true };
     headerRow.eachCell((cell) => {
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } };
@@ -463,7 +463,7 @@ router.post('/export/work-summary', async (req, res) => {
     const totalRow = worksheet.addRow(['', '', '', '', 'TOTAL:', Math.round(totalAmount), Math.round(totalPayout), Math.round(totalDeposit), Math.round(totalAdvance), Math.round(totalFinal)]);
     totalRow.font = { bold: true };
 
-    worksheet.columns = [ { width: 8 }, { width: 15 }, { width: 25 }, { width: 15 }, { width: 15 }, { width: 15 }, { width: 15 }, { width: 15 }, { width: 15 }, { width: 18 } ];
+    worksheet.columns = [{ width: 8 }, { width: 15 }, { width: 25 }, { width: 15 }, { width: 15 }, { width: 15 }, { width: 15 }, { width: 15 }, { width: 15 }, { width: 18 }];
 
     const buffer = await workbook.xlsx.writeBuffer();
     const base64 = Buffer.from(buffer).toString('base64');
@@ -479,7 +479,7 @@ router.post('/export/work-summary', async (req, res) => {
 router.get('/overtime/:year/:month', async (req, res) => {
   try {
     const { year, month } = req.params;
-    
+
     const startDate = new Date(year, month - 1, 1);
     const endDate = new Date(year, month, 0, 23, 59, 59, 999);
 
@@ -490,7 +490,7 @@ router.get('/overtime/:year/:month', async (req, res) => {
 
     // Group by worker
     const workerOvertimeMap = {};
-    
+
     entries.forEach(entry => {
       const workerId = entry.worker._id.toString();
       if (!workerOvertimeMap[workerId]) {
@@ -511,7 +511,7 @@ router.get('/overtime/:year/:month', async (req, res) => {
     });
 
     const report = Object.values(workerOvertimeMap);
-    
+
     res.json({
       month: parseInt(month),
       year: parseInt(year),
@@ -526,7 +526,7 @@ router.get('/overtime/:year/:month', async (req, res) => {
 router.get('/export/overtime/:year/:month', async (req, res) => {
   try {
     const { year, month } = req.params;
-    
+
     const startDate = new Date(year, month - 1, 1);
     const endDate = new Date(year, month, 0, 23, 59, 59, 999);
 
@@ -537,7 +537,7 @@ router.get('/export/overtime/:year/:month', async (req, res) => {
 
     // Group by worker
     const workerOvertimeMap = {};
-    
+
     entries.forEach(entry => {
       const workerId = entry.worker._id.toString();
       if (!workerOvertimeMap[workerId]) {
@@ -563,7 +563,7 @@ router.get('/export/overtime/:year/:month', async (req, res) => {
     // Add title
     const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
       'July', 'August', 'September', 'October', 'November', 'December'];
-    
+
     worksheet.mergeCells('A1:G1');
     worksheet.getCell('A1').value = `Overtime Payment Sheet - ${monthNames[month - 1]} ${year}`;
     worksheet.getCell('A1').font = { bold: true, size: 16 };
@@ -610,7 +610,7 @@ router.get('/export/overtime/:year/:month', async (req, res) => {
         Math.round(item.totalOvertimeHours || 0),
         Math.round(item.totalOvertimePay || 0)
       ]);
-      
+
       totalOvertimePay += item.totalOvertimePay || 0;
 
       row.eachCell((cell) => {
@@ -668,7 +668,7 @@ router.get('/worker-summary/:workerId', async (req, res) => {
     const { startDate, endDate } = req.query;
 
     const filter = { worker: workerId };
-    
+
     if (startDate || endDate) {
       filter.date = {};
       if (startDate) filter.date.$gte = parseLocalDate(startDate);
@@ -680,7 +680,7 @@ router.get('/worker-summary/:workerId', async (req, res) => {
     }
 
     const entries = await DailyEntry.find(filter).sort({ date: -1 });
-    
+
     const summary = {
       totalEntries: entries.length,
       totalHoursWorked: entries.reduce((sum, e) => sum + e.hoursWorked, 0),
@@ -709,7 +709,7 @@ router.post('/save-salary-history', async (req, res) => {
 
     // Process each record and record deposits to advance
     const processedRecords = [];
-    
+
     for (const record of records) {
       const worker = await Worker.findById(record.workerId);
       if (!worker) continue;
@@ -725,7 +725,7 @@ router.post('/save-salary-history', async (req, res) => {
         }
 
         const newBalance = currentBalance - record.deposit;
-        
+
         // Create advance record for the deposit
         await Advance.create({
           worker: worker._id,
@@ -811,9 +811,9 @@ router.post('/save-salary-history', async (req, res) => {
 
     await history.save();
 
-    res.status(201).json({ 
+    res.status(201).json({
       message: 'Salary history saved successfully',
-      history 
+      history
     });
   } catch (error) {
     console.error('POST /reports/save-salary-history error:', error);
@@ -821,11 +821,106 @@ router.post('/save-salary-history', async (req, res) => {
   }
 });
 
+// Delete salary report history
+router.delete('/salary-history/:id', async (req, res) => {
+  try {
+    const history = await SalaryHistory.findById(req.params.id);
+    if (!history) {
+      return res.status(404).json({ error: 'History not found' });
+    }
+    await SalaryHistory.findByIdAndDelete(req.params.id);
+    res.json({ message: 'History deleted' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update salary report history
+router.put('/salary-history/:id', async (req, res) => {
+  try {
+    const { records: newRecords } = req.body;
+    const history = await SalaryHistory.findById(req.params.id);
+
+    if (!history) {
+      return res.status(404).json({ error: 'History not found' });
+    }
+
+    if (!newRecords || !Array.isArray(newRecords)) {
+      return res.status(400).json({ error: 'Invalid or missing records array' });
+    }
+
+    // Process differences and adjust advance balances
+    for (const newRec of newRecords) {
+      const oldRec = history.records.find(r => r.worker.toString() === newRec.workerId || r.workerId === newRec.workerId);
+
+      if (!oldRec) continue;
+
+      const worker = await Worker.findById(oldRec.worker);
+      if (!worker) continue;
+
+      let balanceChange = 0;
+
+      // Calculate differences
+      const depositDiff = (newRec.deposit || 0) - (oldRec.deposit || 0);
+      const newAdvanceDiff = (newRec.newAdvance || 0) - (oldRec.newAdvance || 0);
+
+      // If deposit increased, balance should decrease -> balanceChange -= depositDiff
+      balanceChange -= depositDiff;
+
+      // If newAdvance increased, balance should increase -> balanceChange += newAdvanceDiff
+      balanceChange += newAdvanceDiff;
+
+      if (balanceChange !== 0) {
+        const currentBalance = worker.advanceBalance || 0;
+        const newBalance = currentBalance + balanceChange;
+
+        // Create Advance log for this correction
+        await Advance.create({
+          worker: worker._id,
+          type: balanceChange > 0 ? 'advance' : 'deposit',
+          amount: Math.abs(balanceChange),
+          date: new Date(),
+          notes: `Adjustment from editing Report History (Diff: Deposit ${depositDiff}, NewAdv: ${newAdvanceDiff})`,
+          balanceAfter: newBalance
+        });
+
+        // Update worker balance
+        await Worker.findByIdAndUpdate(worker._id, {
+          advanceBalance: newBalance,
+          $inc: {
+            totalAdvanceTaken: newAdvanceDiff > 0 ? newAdvanceDiff : 0,
+            totalAdvanceRepaid: depositDiff > 0 ? depositDiff : 0
+          }
+        });
+      }
+
+      // Update the record fields
+      oldRec.deposit = newRec.deposit || 0;
+      oldRec.newAdvance = newRec.newAdvance || 0;
+      oldRec.payout = newRec.payout || 0;
+
+      // Recalculate finalAmount for this record
+      oldRec.finalAmount = Math.max(0, (oldRec.totalPay || 0) - oldRec.deposit - oldRec.payout + oldRec.newAdvance);
+    }
+
+    // Recalculate summary totals
+    history.totalDeposit = history.records.reduce((sum, r) => sum + (r.deposit || 0), 0);
+    history.totalNewAdvance = history.records.reduce((sum, r) => sum + (r.newAdvance || 0), 0);
+    history.totalPayout = history.records.reduce((sum, r) => sum + (r.payout || 0), 0);
+    history.totalFinal = history.records.reduce((sum, r) => sum + (r.finalAmount || 0), 0);
+
+    await history.save();
+    res.json(history);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 // Get all salary history
 router.get('/salary-history', async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
-    
+
     const filter = {};
     if (startDate || endDate) {
       filter.savedDate = {};
@@ -852,7 +947,7 @@ router.get('/salary-history/:id', async (req, res) => {
   try {
     const history = await SalaryHistory.findById(req.params.id)
       .populate('records.worker', 'name workerId');
-    
+
     if (!history) {
       return res.status(404).json({ error: 'Salary history not found' });
     }
@@ -867,7 +962,7 @@ router.get('/salary-history/:id', async (req, res) => {
 router.get('/export/salary-history/:historyId', async (req, res) => {
   try {
     const history = await SalaryHistory.findById(req.params.historyId);
-    
+
     if (!history) {
       return res.status(404).json({ error: 'Salary history not found' });
     }
