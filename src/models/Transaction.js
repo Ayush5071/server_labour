@@ -16,13 +16,11 @@ const transactionSchema = new mongoose.Schema({
   },
   person: {
     type: String,
-    enum: ['Biswajit -1', 'Biswajit-2', 'Rajkumar', 'Manoj'],
     trim: true,
     required: false
   },
   targetPerson: {
     type: String,
-    enum: ['Biswajit -1', 'Biswajit-2', 'Rajkumar', 'Manoj'],
     trim: true,
     required: false
   },

@@ -217,10 +217,12 @@ router.get('/summary', async (req, res) => {
 
 // Create transaction
 router.post('/', async (req, res) => {
+  console.log('[vault] POST /api/vault body:', req.body);
   try {
     const { type, amount, category, person, targetPerson, note, date } = req.body;
 
     if (!note) {
+      console.log('[vault] validation error: note is required');
       return res.status(400).json({ error: 'Note is required' });
     }
 
@@ -243,6 +245,7 @@ router.post('/', async (req, res) => {
 
 // Update transaction
 router.put('/:id', async (req, res) => {
+  console.log('[vault] PUT /api/vault/%s body:', req.params.id, req.body);
   try {
     const { type, amount, category, person, targetPerson, note, date } = req.body;
 
