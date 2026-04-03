@@ -1,5 +1,9 @@
 import express from 'express';
 import Worker from '../models/Worker.js';
+import DailyEntry from '../models/DailyEntry.js';
+import Advance from '../models/Advance.js';
+import Payment from '../models/Payment.js';
+import Bonus from '../models/Bonus.js';
 
 const router = express.Router();
 
@@ -120,20 +124,36 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// Delete worker (soft delete)
+// Delete worker permanently
 router.delete('/:id', async (req, res) => {
   try {
-    const worker = await Worker.findByIdAndUpdate(
-      req.params.id,
-      { isActive: false },
-      { new: true }
-    );
+    const worker = await Worker.findById(req.params.id);
 
     if (!worker) {
       return res.status(404).json({ error: 'Worker not found' });
     }
 
-    res.json({ message: 'Worker deactivated successfully', worker });
+    const workerId = worker._id;
+
+    const [dailyEntries, advances, payments, bonuses] = await Promise.all([
+      DailyEntry.deleteMany({ worker: workerId }),
+      Advance.deleteMany({ worker: workerId }),
+      Payment.deleteMany({ worker: workerId }),
+      Bonus.deleteMany({ worker: workerId })
+    ]);
+
+    await Worker.findByIdAndDelete(workerId);
+
+    res.json({
+      message: 'Worker permanently deleted',
+      deleted: {
+        worker: 1,
+        dailyEntries: dailyEntries.deletedCount || 0,
+        advances: advances.deletedCount || 0,
+        payments: payments.deletedCount || 0,
+        bonuses: bonuses.deletedCount || 0
+      }
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
